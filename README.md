@@ -6,8 +6,8 @@ Foobar is a simple python app to speed up processing weights from scale videos. 
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/yourproject.git
-cd yourproject
+git clone https://github.com/harrly14/VideoWeightTool.git
+cd VideoWeightTool
 ```
 
 2. Install dependencies:
@@ -25,8 +25,6 @@ python main.py
 
 Pull requests are welcome. For major changes, please open an issue first
 to discuss what you would like to change.
-
-Please make sure to update tests as appropriate.
 
 ## License
 
