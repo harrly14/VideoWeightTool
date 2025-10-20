@@ -1,4 +1,4 @@
-# Foobar
+# Video Weight Tool
 
 Foobar is a simple python app to speed up processing weights from scale videos. The app also allows real-time trimming, cropping, and editing of videos.
 
