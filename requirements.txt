@@ -1,5 +1,5 @@
 ffmpeg-python==0.2.0
-numpy>=2.0.0,<3.0.0
-opencv-python-headless>=4.8.0,<5.0.0
+numpy>=1.21.0,<3.0.0
+opencv-python-headless>=4.5.0,<5.0.0
 PyQt5>=5.15.0,<6.0.0
 QtRangeSlider==0.1.5
