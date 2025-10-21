@@ -132,7 +132,7 @@ if __name__ == "__main__":
     options = QFileDialog.Options()
 
     video_filter = "Video Files (*.mp4 *.MP4 *.mov *.MOV *.avi *.AVI *.mkv *.MKV);;All Files (*)"
-    video_path, selected_filter = QFileDialog.getOpenFileName(
+    video_path, _ = QFileDialog.getOpenFileName(
         None,
         "Select video file",
         os.getcwd(),
@@ -155,12 +155,12 @@ if __name__ == "__main__":
     base_outputs_dir = "outputs"
     os.makedirs(base_outputs_dir, exist_ok=True)
     default_dir = os.path.join(os.getcwd(), base_outputs_dir)
-    output_parent = QFileDialog.getExistingDirectory(None, "Select, output folder", default_dir,
+    output_parent = QFileDialog.getExistingDirectory(None, "Select an output folder", default_dir,
                                                     QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks)
 
     if not output_parent:
         QMessageBox.information(None, "No folder selected", "No folder for the output files selected. Exiting...")
-        sys.exit(0)    
+        sys.exit(0)
 
     video_base = os.path.splitext(os.path.basename(video_path))[0]
     timestamp = datetime.now().astimezone().strftime("%Y-%m-%d_%H-%M-%S")
@@ -169,9 +169,26 @@ if __name__ == "__main__":
     os.makedirs(output_folder, exist_ok=True)
 
     updated_params = None
-    output_csv = os.path.join(output_folder, "weights.csv")
+    output_csv = os.path.join(output_folder, f"{video_base}_weights.csv")
+
+    use_existing_csv = QMessageBox.question(None, 'Message', 'Would you like to use a pre-existing csv?', 
+                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
 
     with open(output_csv, 'w', newline='') as csvfile:
+        if use_existing_csv == QMessageBox.Yes:
+            csv_filter = "Video Files (*.mp4 *.MP4 *.mov *.MOV *.avi *.AVI *.mkv *.MKV);;All Files (*)"
+            csv_path, _ = QFileDialog.getOpenFileName(
+                None,
+                "Select existing CSV file",
+                os.getcwd(),
+                csv_filter,
+                options=options
+            )
+            if not csv_path:
+                QMessageBox.information(None, "No file selected", "No csv selected. Using an empty csv...")
+            else: 
+                output_csv = csv_path
+    
         writer = csv.writer(csvfile)
         writer.writerow(["frame_num", "weight"])
 
