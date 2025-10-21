@@ -130,7 +130,6 @@ if __name__ == "__main__":
 
     # choose file
     options = QFileDialog.Options()
-    options |= QFileDialog.DontUseNativeDialog  # try non-native dialog (fixes some case-sensitive filters)
 
     video_filter = "Video Files (*.mp4 *.MP4 *.mov *.MOV *.avi *.AVI *.mkv *.MKV);;All Files (*)"
     video_path, selected_filter = QFileDialog.getOpenFileName(
