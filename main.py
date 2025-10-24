@@ -175,8 +175,9 @@ if __name__ == "__main__":
                          QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
 
     with open(output_csv, 'w', newline='') as csvfile:
+        writer = csv.writer(csvfile)
         if use_existing_csv == QMessageBox.Yes:
-            csv_filter = "Video Files (*.mp4 *.MP4 *.mov *.MOV *.avi *.AVI *.mkv *.MKV);;All Files (*)"
+            csv_filter = "CSV Files (*.csv)"
             csv_path, _ = QFileDialog.getOpenFileName(
                 None,
                 "Select existing CSV file",
@@ -188,20 +189,18 @@ if __name__ == "__main__":
                 QMessageBox.information(None, "No file selected", "No csv selected. Using an empty csv...")
             else: 
                 output_csv = csv_path
-    
-        writer = csv.writer(csvfile)
-        writer.writerow(["frame_num", "weight"])
-
-        total_frames = int(scale_video.get(cv2.CAP_PROP_FRAME_COUNT))  
-        for frame in range(total_frames):
-            writer.writerow([frame, 0])
+        else:
+            writer.writerow(["frame_num", "weight"])
+            total_frames = int(scale_video.get(cv2.CAP_PROP_FRAME_COUNT))  
+            for frame in range(total_frames):
+                writer.writerow([frame, 0])
         updated_params = launch_editing_window(scale_video, output_csv)
         
+    backup_csv = output_csv + 'bak'
     if updated_params.trim_end is not None:
         start_row = updated_params.trim_start + 1
         end_row = updated_params.trim_end + 1
         
-        backup_csv = output_csv + 'bak'
         os.rename(output_csv, backup_csv)
 
         try:
@@ -221,7 +220,13 @@ if __name__ == "__main__":
             if os.path.exists(backup_csv):
                 os.rename(backup_csv, output_csv)
             QMessageBox.warning(None, "Error", f"An error occurred: {e}")
-
+    else: 
+        try:
+            os.remove(backup_csv)
+        except Exception as e:
+            if os.path.exists(backup_csv):
+                os.rename(backup_csv, output_csv)
+            QMessageBox.warning(None, "Error", f"An error occurred: {e}")
 
     save_y_n = QMessageBox.question(None, 'Message', 'Would you like  to save the video with your edits?',
                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)

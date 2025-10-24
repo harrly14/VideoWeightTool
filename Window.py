@@ -1,7 +1,9 @@
 import csv
 import cv2
 import os
+import sys
 import numpy as np
+import time
 from PyQt5.QtWidgets import QWidget, QLabel, QLineEdit, QPushButton, QHBoxLayout, QVBoxLayout, QSlider, QGroupBox, QMessageBox, QAction
 from PyQt5.QtGui import QPixmap, QImage, QRegExpValidator
 from PyQt5.QtCore import Qt, QRegExp, QEvent, QTimer
@@ -25,6 +27,8 @@ class EditWindow(QWidget):
         self.end_frame = self.total_frames
         self.csv_path = csv_path
         self.frame_data = self.load_csv_data()
+
+        self.read_timeout_warning_threshold = 5.0
 
         self.slider_timer = QTimer()
         self.slider_timer.setSingleShot(True)
@@ -354,15 +358,24 @@ class EditWindow(QWidget):
     def load_frame_from_video(self):
         if self.last_loaded_frame != self.current_frame_index:
             self.video.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame_index)
+
+            time0 = time.time()
             success, frame = self.video.read()
+            duration = time.time() - time0
             
-            if success:
+            if (duration >= self.read_timeout_warning_threshold) or (not success):
+                QMessageBox.critical(None, 'Error', 'Frame took too long to read. ' \
+                'If using a file on a network share, consider making a local copy. You can find a backup of your CSV in the specified outputs folder.')
+                try:
+                    if hasattr(self.video, "release"):
+                        self.video.release()
+                except Exception:
+                    pass
+                sys.exit(-1)
+            else:
                 self.current_raw_frame = frame
                 self.last_loaded_frame = self.current_frame_index
-            else:
-                self.current_raw_frame = None
-                self.last_loaded_frame = -1
-                self.video_label.setText("Error loading frame")
+
             
         if self.current_raw_frame is not None:
                 value = self.frame_data.get(self.current_frame_index, "0")
@@ -456,7 +469,7 @@ class EditWindow(QWidget):
                     if 0 <= frame_num < self.total_frames:
                         data[frame_num] = weight
         except FileNotFoundError:
-            QMessageBox.critical(self, 'Critical', 'CSV file not found')
+            QMessageBox.critical(self, 'Error', 'CSV file not found')
         return data
 
     def cv2_to_qimage(self, cv_img):
