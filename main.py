@@ -196,11 +196,11 @@ if __name__ == "__main__":
                 writer.writerow([frame, 0])
         updated_params = launch_editing_window(scale_video, output_csv)
         
-    backup_csv = output_csv + 'bak'
     if updated_params.trim_end is not None:
         start_row = updated_params.trim_start + 1
         end_row = updated_params.trim_end + 1
         
+        backup_csv = output_csv + 'bak'
         os.rename(output_csv, backup_csv)
 
         try:
@@ -216,13 +216,6 @@ if __name__ == "__main__":
             
             os.remove(backup_csv)
 
-        except Exception as e:
-            if os.path.exists(backup_csv):
-                os.rename(backup_csv, output_csv)
-            QMessageBox.warning(None, "Error", f"An error occurred: {e}")
-    else: 
-        try:
-            os.remove(backup_csv)
         except Exception as e:
             if os.path.exists(backup_csv):
                 os.rename(backup_csv, output_csv)
