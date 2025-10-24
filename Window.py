@@ -246,7 +246,7 @@ class EditWindow(QWidget):
         controls_layout.addWidget(contrast_group)
 
         apply_button = QPushButton("Save and close")
-        apply_button.clicked.connect(self.close)
+        apply_button.clicked.connect(self.save_and_close)
         controls_layout.addWidget(apply_button)
 
         return controls_layout
@@ -502,9 +502,16 @@ class EditWindow(QWidget):
 
     def closeEvent(self, event):
         if self.confirm_close():
+            backup_csv = self.csv_path + ".backup"
+            if os.path.exists(backup_csv):
+                os.remove(backup_csv)
             event.accept()
         else:
             event.ignore()
 
-    def close(self):
-            super().close()
+    def save_and_close(self):
+        value = self.weight_entry.text().strip()
+        if value:
+            self.frame_data[self.current_frame_index] = value
+        self.save_to_csv()
+        self.close()
