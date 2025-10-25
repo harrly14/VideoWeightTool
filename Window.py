@@ -26,6 +26,7 @@ class EditWindow(QWidget):
         self.start_frame = 0
         self.end_frame = self.total_frames
         self.csv_path = csv_path
+        self.processed_frames_count = 0
         self.frame_data = self.load_csv_data()
 
         self.read_timeout_warning_threshold = 5.0
@@ -57,7 +58,6 @@ class EditWindow(QWidget):
         self.setLayout(main_layout)
         self.load_frame_from_video()
     
-
     def _debounced_slider(self, slider, value_changed_func):
         self.slider_timer.stop()
         self.pending_slider_action = lambda: value_changed_func(slider.value())
@@ -246,6 +246,26 @@ class EditWindow(QWidget):
         contrast_group.setLayout(contrast_layout)
         controls_layout.addWidget(contrast_group)
 
+        frame_info_group = QGroupBox("Frame info")
+        frame_info_layout = QVBoxLayout()
+
+        scrub_info_layout = QHBoxLayout()
+        scrub_info_label = QLabel("Current frame:")
+        self.scrub_frame_label = QLabel(f"{self.current_frame_index + 1}/{self.end_frame}")
+        scrub_info_layout.addWidget(scrub_info_label)
+        scrub_info_layout.addWidget(self.scrub_frame_label)
+        frame_info_layout.addLayout(scrub_info_layout)
+
+        processed_frames_layout = QHBoxLayout()
+        processed_info_label = QLabel("Processed frames:")
+        self.processed_frame_label = QLabel(f"{self.processed_frames_count}/{self.end_frame}")
+        processed_frames_layout.addWidget(processed_info_label)
+        processed_frames_layout.addWidget(self.processed_frame_label)
+        frame_info_layout.addLayout(processed_frames_layout)
+
+        frame_info_group.setLayout(frame_info_layout)
+        controls_layout.addWidget(frame_info_group)
+
         apply_button = QPushButton("Save and close")
         apply_button.clicked.connect(self.save_and_close)
         controls_layout.addWidget(apply_button)
@@ -337,6 +357,9 @@ class EditWindow(QWidget):
 
             self.prev_button.setEnabled(False if self.current_frame_index <= self.start_frame else True)
             self.next_button.setEnabled(False if self.current_frame_index >= self.end_frame - 1 else True)
+
+            self.processed_frame_label.setText(f"{self.processed_frames_count}/{self.end_frame}")
+            self.scrub_frame_label.setText(f"{self.current_frame_index + 1}/{self.end_frame}")
             
             if self.current_frame_index < self.start_frame or self.current_frame_index >= self.end_frame:
                 self.seek_to_frame(self.start_frame)
@@ -376,6 +399,7 @@ class EditWindow(QWidget):
             else:
                 self.current_raw_frame = frame
                 self.last_loaded_frame = self.current_frame_index
+                self.scrub_frame_label.setText(f"{self.current_frame_index + 1}/{self.end_frame}")
 
             
         if self.current_raw_frame is not None:
@@ -443,6 +467,8 @@ class EditWindow(QWidget):
         try:
             self.frame_data[self.current_frame_index] = value
             self.save_to_csv()
+            self.processed_frames_count += 1
+            self.processed_frame_label.setText(f"{self.processed_frames_count}/{self.end_frame}")
             
             if self.current_frame_index < self.end_frame - 1:
                 self.next_frame()
@@ -469,6 +495,8 @@ class EditWindow(QWidget):
                     weight = row.get('weight', "0")
                     if 0 <= frame_num < self.total_frames:
                         data[frame_num] = weight
+                        if weight != "0":
+                            self.processed_frames_count += 1
         except FileNotFoundError:
             QMessageBox.critical(self, 'Error', 'CSV file not found')
         return data
@@ -482,11 +510,17 @@ class EditWindow(QWidget):
     
     def next_frame(self):
         if self.current_frame_index < self.end_frame - 1:
+            if self.weight_entry.text().strip():
+                self.frame_data[self.current_frame_index] = self.weight_entry.text().strip()
+                self.save_to_csv()
             self.current_frame_index += 1
             self.load_frame_from_video()
 
     def previous_frame(self):
         if self.current_frame_index > self.start_frame:
+            if self.weight_entry.text().strip():
+                self.frame_data[self.current_frame_index] = self.weight_entry.text().strip()
+                self.save_to_csv()
             self.current_frame_index -= 1
             self.load_frame_from_video()
 

@@ -6,11 +6,23 @@ import sys
 import subprocess
 import re
 import ffmpeg
+import subprocess
 from datetime import datetime
 from Window import EditWindow
+from VideoParams import VideoParams
 from PyQt5.QtWidgets import QApplication, QFileDialog, QMessageBox, QProgressDialog
 
-print(ffmpeg.__file__)
+def is_ffmpeg_installed():
+    try:
+        subprocess.run(
+            ['ffmpeg', '-version'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True
+        )
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
 
 def apply_edits_and_save(video_path, video_params, output_folder, progress_callback=None):
     file_name = "tmp_edited_video.mp4"
@@ -128,6 +140,10 @@ if __name__ == "__main__":
     #ensure a QApplication exists before making any QWidgets
     app = QApplication.instance() or QApplication(sys.argv)
 
+    if not is_ffmpeg_installed():
+        QMessageBox.critical(None, "Error", "ffmpeg is not installed or not found in PATH. \nPlease install ffmpeg to use this script.")
+        sys.exit(1)
+
     # choose file
     options = QFileDialog.Options()
 
@@ -221,38 +237,40 @@ if __name__ == "__main__":
                 os.rename(backup_csv, output_csv)
             QMessageBox.warning(None, "Error", f"An error occurred: {e}")
 
-    save_y_n = QMessageBox.question(None, 'Message', 'Would you like  to save the video with your edits?',
-                                        QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+    if updated_params != VideoParams():
+        save_y_n = QMessageBox.question(None, 'Message', 'Would you like  to save the video with your edits?',
+                                            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if save_y_n == QMessageBox.Yes:
+            if updated_params is None:
+                QMessageBox.warning(None, "No edits", "No edit params returned. Not saving.")
+            else: 
+                progress = QProgressDialog("Processing video...", "Cancel", 0, 100)
+                progress.setWindowTitle("Saving video")
+                progress.setMinimumDuration(0)
+                progress.setValue(0)
 
-    if save_y_n == QMessageBox.Yes:
-        if updated_params is None:
-            QMessageBox.warning(None, "No edits", "No edit params returned. Not saving.")
-        else: 
-            progress = QProgressDialog("Processing video...", "Cancel", 0, 100)
-            progress.setWindowTitle("Saving video")
-            progress.setMinimumDuration(0)
-            progress.setValue(0)
-
-            progress.show()
-            QApplication.processEvents()
-            # a better approach here would be to use a worker thread, but i dont know how to do that so this is what ya get
-            def update_progress(value):
-                progress.setValue(value)
-                progress.setLabelText(f"Processing video... {value}%")
+                progress.show()
                 QApplication.processEvents()
-                return not progress.wasCanceled()
-            
-            edited_video_path = apply_edits_and_save(video_path, updated_params, output_folder, progress_callback=update_progress)
+                # a better approach here would be to use a worker thread, but i dont know how to do that so this is what ya get
+                def update_progress(value):
+                    progress.setValue(value)
+                    progress.setLabelText(f"Processing video... {value}%")
+                    QApplication.processEvents()
+                    return not progress.wasCanceled()
+                
+                edited_video_path = apply_edits_and_save(video_path, updated_params, output_folder, progress_callback=update_progress)
 
-            progress.close()
+                progress.close()
 
-            if edited_video_path is not None:
-                QMessageBox.information(None, "Success", 
-                    f"The updated video has been written to:\n{edited_video_path}")
-            else:
-                QMessageBox.warning(None, "Failed", "Failed to save the updated video.")
+                if edited_video_path is not None:
+                    QMessageBox.information(None, "Success", 
+                        f"The updated video has been written to:\n{edited_video_path}")
+                else:
+                    QMessageBox.warning(None, "Failed", "Failed to save the updated video.")
+        else: 
+            QMessageBox.information(None, "Video not saved", f"Your video edits were not saved.\nYour CSV can be found in {output_csv}")
     else: 
-        QMessageBox.information(None, "Not saved", f"Changes were not saved. Your csv can still be found in {output_csv}")
+        QMessageBox.information(None, "No video changes to save", f"Your CSV can be found in {output_csv}")
 
     try:
         if scale_video is not None:

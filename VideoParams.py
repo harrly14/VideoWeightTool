@@ -26,6 +26,12 @@ class VideoParams:
         self.contrast = self._DEFAULTS['contrast'] if contrast is None else contrast
         self.validate()
 
+    def __eq__(self, other):
+        if not isinstance(other, VideoParams):
+            return NotImplemented
+        return (self.trim_start == other.trim_start and self.trim_end == other.trim_end and self.crop_coords == other.crop_coords
+                and self.brightness == other.brightness and self.saturation == other.saturation and self.contrast == other.contrast)            
+
     def validate(self):
         if self.trim_start < 0:
             raise ValueError("trim_start must be non-negative")
