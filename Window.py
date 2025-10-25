@@ -101,6 +101,32 @@ class EditWindow(QWidget):
         video_layout.addWidget(self.video_label)
 
         nav_layout = QHBoxLayout()
+        
+        weight_label = QLabel("Enter weight:")
+        self.weight_entry = QLineEdit()
+        self.weight_entry.setPlaceholderText("Weight")
+        self.weight_entry.setToolTip("Enter weight for the current frame (Enter/Space to submit)")
+
+        pattern = QRegExp(r'^[0-9.,]*$')
+        validator = QRegExpValidator(pattern)
+        self.weight_entry.setValidator(validator)
+        self.weight_entry.installEventFilter(self)
+
+        self.weight_entry.returnPressed.connect(self.write_entry)
+
+        self.focus_weight_action = QAction("Focus Weight Entry", self)
+        self.focus_weight_action.setShortcut("W")
+        self.focus_weight_action.triggered.connect(lambda: self.weight_entry.setFocus())
+        self.addAction(self.focus_weight_action)
+
+        weight_enter_button = QPushButton("Enter")
+        weight_enter_button.clicked.connect(self.write_entry)
+
+        weight_row = QHBoxLayout()
+        weight_row.addWidget(weight_label)
+        weight_row.addWidget(self.weight_entry)
+        weight_row.addWidget(weight_enter_button)
+        video_layout.addLayout(weight_row)
 
         self.prev_button = QPushButton("Previous")
         self.prev_button.clicked.connect(self.previous_frame)
@@ -159,31 +185,6 @@ class EditWindow(QWidget):
 
         main_layout.addLayout(video_layout, 2)
 
-        weight_label = QLabel("Enter weight:")
-        self.weight_entry = QLineEdit()
-        self.weight_entry.setPlaceholderText("Weight")
-        self.weight_entry.setToolTip("Enter weight for the current frame (Enter/Space to submit)")
-
-        pattern = QRegExp(r'^[0-9.,]*$')
-        validator = QRegExpValidator(pattern)
-        self.weight_entry.setValidator(validator)
-        self.weight_entry.installEventFilter(self)
-
-        self.weight_entry.returnPressed.connect(self.write_entry)
-
-        self.focus_weight_action = QAction("Focus Weight Entry", self)
-        self.focus_weight_action.setShortcut("W")
-        self.focus_weight_action.triggered.connect(lambda: self.weight_entry.setFocus())
-        self.addAction(self.focus_weight_action)
-
-        weight_enter_button = QPushButton("Enter")
-        weight_enter_button.clicked.connect(self.write_entry)
-
-        weight_row = QHBoxLayout()
-        weight_row.addWidget(weight_label)
-        weight_row.addWidget(self.weight_entry)
-        weight_row.addWidget(weight_enter_button)
-        video_layout.addLayout(weight_row)
 
         controls_layout = self.setup_controls()
         main_layout.addLayout(controls_layout, 1)
