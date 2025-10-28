@@ -109,7 +109,6 @@ def apply_edits_and_save(video_path, video_params, output_folder, progress_callb
         if progress_callback:
             progress_callback(100)
 
-        # rename temp file
         try:
             base_name = os.path.splitext(os.path.basename(video_path))[0]
             final_name = f"{base_name}_edited.mp4"
@@ -140,13 +139,18 @@ if __name__ == "__main__":
     #ensure a QApplication exists before making any QWidgets
     app = QApplication.instance() or QApplication(sys.argv)
 
-    if not is_ffmpeg_installed():
-        QMessageBox.critical(None, "Error", "ffmpeg is not installed or not found in PATH. \nPlease install ffmpeg to use this script.")
-        sys.exit(1)
+    ffmpeg_found = is_ffmpeg_installed()
+    if not ffmpeg_found:
+        ffmpeg_q = QMessageBox.question(None, "A dependency is not installed", "ffmpeg is not installed or not found in PATH. " \
+        "\nIf you proceed, you will not be able to save your video edits" \
+        "\n Would you like to proceed?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if ffmpeg_q == QMessageBox.No:
+            sys.exit(1)
 
-    # choose file
+    QMessageBox.information(None, "Select video file", "You will now select a video file. " \
+    "\nI reccomend not using a file on a network drive, as latency issues could cause the application to crash")
+
     options = QFileDialog.Options()
-
     video_filter = "Video Files (*.mp4 *.MP4 *.mov *.MOV *.avi *.AVI *.mkv *.MKV);;All Files (*)"
     video_path, _ = QFileDialog.getOpenFileName(
         None,
@@ -167,51 +171,56 @@ if __name__ == "__main__":
         cv2.destroyAllWindows()
         sys.exit(1)
 
-    # choose output directory
-    base_outputs_dir = "outputs"
-    os.makedirs(base_outputs_dir, exist_ok=True)
-    default_dir = os.path.join(os.getcwd(), base_outputs_dir)
-    output_parent = QFileDialog.getExistingDirectory(None, "Select an output folder", default_dir,
-                                                    QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks)
-
-    if not output_parent:
-        QMessageBox.information(None, "No folder selected", "No folder for the output files selected. Exiting...")
-        sys.exit(0)
-
+    updated_params = None
     video_base = os.path.splitext(os.path.basename(video_path))[0]
     timestamp = datetime.now().astimezone().strftime("%Y-%m-%d_%H-%M-%S")
-    output_folder = os.path.join(output_parent, f"{video_base}_{timestamp}")
 
-    os.makedirs(output_folder, exist_ok=True)
+    use_existing_csv = QMessageBox.question(None, 'CSV setup', 
+            'Would you like to use a pre-existing csv with frame weights?' \
+            '\n Yes - Select the existing CSV file' \
+            '\n No - Select a folder for the output files and create the CSV', 
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+    
+    output_dir_made = False
 
-    updated_params = None
-    output_csv = os.path.join(output_folder, f"{video_base}_weights.csv")
+    if use_existing_csv == QMessageBox.No: 
+        output_parent = QFileDialog.getExistingDirectory(None, "Select an output folder", os.getcwd(),
+                                                    QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks)
 
-    use_existing_csv = QMessageBox.question(None, 'Message', 'Would you like to use a pre-existing csv?', 
-                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if not output_parent:
+            QMessageBox.information(None, "No folder selected", "No folder for the output files selected. Exiting...")
+            sys.exit(0)
 
-    with open(output_csv, 'w', newline='') as csvfile:
-        writer = csv.writer(csvfile)
-        if use_existing_csv == QMessageBox.Yes:
-            csv_filter = "CSV Files (*.csv)"
-            csv_path, _ = QFileDialog.getOpenFileName(
-                None,
-                "Select existing CSV file",
-                os.getcwd(),
-                csv_filter,
-                options=options
-            )
-            if not csv_path:
-                QMessageBox.information(None, "No file selected", "No csv selected. Using an empty csv...")
-            else: 
-                output_csv = csv_path
+        output_folder = os.path.join(output_parent, f"{video_base}_{timestamp}")
+
+        output_csv = os.path.join(output_folder, f"{video_base}_weights.csv")
+        os.makedirs(output_folder, exist_ok=True)
+        output_dir_made = True
+        with open(output_csv, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            if use_existing_csv == QMessageBox.No:
+                writer.writerow(["frame_num", "weight"])
+                total_frames = int(scale_video.get(cv2.CAP_PROP_FRAME_COUNT))  
+                for frame in range(total_frames):
+                    writer.writerow([frame, 0])
+    else:
+        csv_filter = "CSV Files (*.csv)"
+        csv_path, _ = QFileDialog.getOpenFileName(
+            None,
+            "Select existing CSV file",
+            os.getcwd(),
+            csv_filter,
+            options=options
+        )
+        if not csv_path:
+            QMessageBox.information(None, "No file selected", "No csv selected. Creating an empty csv in the current directory...")
+            output_csv = os.path.join(os.getcwd(), f"{video_base}_weights.csv")
         else:
-            writer.writerow(["frame_num", "weight"])
-            total_frames = int(scale_video.get(cv2.CAP_PROP_FRAME_COUNT))  
-            for frame in range(total_frames):
-                writer.writerow([frame, 0])
-        updated_params = launch_editing_window(scale_video, output_csv)
-        
+            output_csv = csv_path
+
+    
+    updated_params = launch_editing_window(scale_video, output_csv)
+  
     if updated_params.trim_end is not None:
         start_row = updated_params.trim_start + 1
         end_row = updated_params.trim_end + 1
@@ -237,13 +246,25 @@ if __name__ == "__main__":
                 os.rename(backup_csv, output_csv)
             QMessageBox.warning(None, "Error", f"An error occurred: {e}")
 
-    if updated_params != VideoParams():
+    if ffmpeg_found and updated_params != VideoParams():
         save_y_n = QMessageBox.question(None, 'Message', 'Would you like  to save the video with your edits?',
                                             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if save_y_n == QMessageBox.Yes:
             if updated_params is None:
                 QMessageBox.warning(None, "No edits", "No edit params returned. Not saving.")
             else: 
+                if not output_dir_made: 
+                    output_parent = QFileDialog.getExistingDirectory(None, "Select an output folder", os.getcwd(),
+                                                    QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks)
+                    if not output_parent:
+                        QMessageBox.information(None, "No folder selected", "No folder for the output files selected. Exiting...")
+                        sys.exit(0)
+
+                    output_folder = os.path.join(output_parent, f"{video_base}_{timestamp}")
+
+                    os.makedirs(output_folder, exist_ok=True)
+                    output_dir_made = True
+
                 progress = QProgressDialog("Processing video...", "Cancel", 0, 100)
                 progress.setWindowTitle("Saving video")
                 progress.setMinimumDuration(0)
@@ -268,9 +289,9 @@ if __name__ == "__main__":
                 else:
                     QMessageBox.warning(None, "Failed", "Failed to save the updated video.")
         else: 
-            QMessageBox.information(None, "Video not saved", f"Your video edits were not saved.\nYour CSV can be found in {output_csv}")
+            QMessageBox.information(None, "Video not saved", f"Your video edits were not saved.\nYour CSV can be found at:\n {output_csv}")
     else: 
-        QMessageBox.information(None, "No video changes to save", f"Your CSV can be found in {output_csv}")
+        QMessageBox.information(None, "No video changes to save", f"Your CSV can be found at:\n{output_csv}")
 
     try:
         if scale_video is not None:
