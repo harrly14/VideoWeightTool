@@ -56,6 +56,7 @@ class EditWindow(QWidget):
         self.video.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
         self.setLayout(main_layout)
+        self.current_frame_index = self.processed_frames_count
         self.load_frame_from_video()
     
     def _debounced_slider(self, slider, value_changed_func):
