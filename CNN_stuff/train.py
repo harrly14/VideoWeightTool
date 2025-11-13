@@ -420,7 +420,7 @@ if __name__ == "__main__":
         val_dir='data/val',
         test_dir='data/test',
         batch_size=32, # Reduce to 8 or 4 if running out of memory
-        num_epochs=100,
+        num_epochs=50,
         learning_rate=0.001,
         hidden_size=256,
         num_lstm_layers=2,
@@ -429,6 +429,6 @@ if __name__ == "__main__":
     )
     
     print("\nTraining finished! Next steps:")
-    print("1. Check models/ folder for saved models")
+    print("1. Check models folder for saved models")
     print("2. Best model is saved as 'best_model.pth'")
     print("3. Use this model for inference on new videos")
