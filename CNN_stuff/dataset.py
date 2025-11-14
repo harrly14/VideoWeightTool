@@ -130,6 +130,7 @@ class ScaleOCRDataset(Dataset):
         row = self.labels_df.iloc[index]
         frame_num = row['frame_number'] 
         weight = row['weight']
+        weight_formatted = f"{float(weight):.3f}"
         filename = f"{row['filename']}_{frame_num}{self.file_extension}"
 
         img_path = self.images_dir / filename
@@ -144,7 +145,7 @@ class ScaleOCRDataset(Dataset):
             transformed = self.transform(image=image)
             image = transformed['image']
 
-        return image, str(weight), filename
+        return image, weight_formatted, filename
 def get_transforms(image_size=(256, 64), is_train=False):
     target_width, target_height = image_size
     

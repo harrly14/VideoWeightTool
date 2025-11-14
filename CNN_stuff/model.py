@@ -220,6 +220,10 @@ class ScaleOCRModel(nn.Module):
         Returns:
             List of decoded strings
         """
+        # default blank is last class
+        if blank_label is None:
+            blank_label = self.num_classes - 1
+
         # Get most likely character at each time step
         _, preds = torch.max(log_probs, dim=2)  # (seq_len, batch)
         preds = preds.transpose(0, 1)  # (batch, seq_len)

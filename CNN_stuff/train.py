@@ -44,7 +44,7 @@ class CTCLabelEncoder:
             '.': 10
         }
         self.idx_to_char = {v: k for k, v in self.char_to_idx.items()}
-        self.blank_label = 11  # CTC blank token
+        self.blank_label = 11
     
     def encode(self, text):
         # encode a string to list of indices
@@ -191,7 +191,9 @@ def validate(model, val_loader, criterion, encoder, device, epoch):
                 total_loss += loss.item()
             
             # Decode predictions
-            predictions = model.decode_predictions(log_probs, max_length=5)
+            # use a slightly larger max_length (or compute from batch) to avoid truncation
+            max_len = max(len(w) for w in weights) if len(weights) > 0 else 10
+            predictions = model.decode_predictions(log_probs, max_length=max_len + 2)
             
             # Calculate accuracy
             for pred, target in zip(predictions, weights):
@@ -201,9 +203,12 @@ def validate(model, val_loader, criterion, encoder, device, epoch):
                 if pred == target:
                     correct_sequences += 1
                 
-                # Character-level accuracy
-                for p_char, t_char in zip(pred, target):
+                # count missing chars as incorrect
+                max_l = max(len(pred), len(target))
+                for i in range(max_l):
                     total_chars += 1
+                    p_char = pred[i] if i < len(pred) else None
+                    t_char = target[i] if i < len(target) else None
                     if p_char == t_char:
                         correct_chars += 1
     
@@ -278,7 +283,7 @@ def train_model(
         test_dir=test_dir,
         batch_size=batch_size,
         image_size=image_size,
-        num_workers=4
+        num_workers=1
     )
     
     print(f"\nDataset sizes:")
@@ -286,18 +291,18 @@ def train_model(
     print(f"  Val: {len(val_dataset)} samples")
     if test_dataset:
         print(f"  Test: {len(test_dataset)} samples")
+
+    # Create label encoder
+    encoder = CTCLabelEncoder()
     
     # Create model
     print("\nCreating model...")
     model = create_model(
-        num_chars=11,
+        num_chars=len(encoder.char_to_idx),
         hidden_size=hidden_size,
         num_lstm_layers=num_lstm_layers,
         device=device.type
     )
-    
-    # Create label encoder
-    encoder = CTCLabelEncoder()
     
     # Loss function (CTC Loss)
     criterion = nn.CTCLoss(blank=encoder.blank_label, zero_infinity=True)
@@ -419,7 +424,7 @@ if __name__ == "__main__":
         train_dir='data/train',
         val_dir='data/val',
         test_dir='data/test',
-        batch_size=32, # Reduce to 8 or 4 if running out of memory
+        batch_size=8, # Reduce to 8 or 4 if running out of memory
         num_epochs=50,
         learning_rate=0.001,
         hidden_size=256,
