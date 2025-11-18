@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.cuda.amp import autocast, GradScaler
 import numpy as np
 from pathlib import Path
 import time
@@ -60,9 +61,9 @@ class CTCLabelEncoder:
         return targets, target_lengths
 
 
-def train_one_epoch(model, train_loader, criterion, optimizer, encoder, device, epoch):
+def train_one_epoch(model, train_loader, criterion, optimizer, encoder, device, epoch, scaler=None, accumulation_steps=1):
     """
-    Train for one epoch
+    Train for one epoch with mixed precision support and gradient accumulation
     
     Args:
         model: The neural network
@@ -72,6 +73,8 @@ def train_one_epoch(model, train_loader, criterion, optimizer, encoder, device, 
         encoder: Label encoder
         device: 'cpu' or 'cuda'
         epoch: Current epoch number
+        scaler: GradScaler for mixed precision training (optional)
+        accumulation_steps: Number of batches to accumulate gradients over
     
     Returns:
         avg_loss: Average loss for the epoch
@@ -86,6 +89,8 @@ def train_one_epoch(model, train_loader, criterion, optimizer, encoder, device, 
     
     start_time = time.time()
     
+    optimizer.zero_grad()
+    
     for batch_idx, (images, weights, filenames) in enumerate(train_loader):
         # Move images to device
         images = images.to(device)
@@ -95,12 +100,18 @@ def train_one_epoch(model, train_loader, criterion, optimizer, encoder, device, 
         targets = targets.to(device)
         target_lengths = target_lengths.to(device)
         
-        # Forward pass
-        log_probs, output_lengths = model(images)
-        output_lengths = output_lengths.to(device)
-        
-        # Calculate CTC loss
-        loss = criterion(log_probs, targets, output_lengths, target_lengths)
+        # Forward pass with automatic mixed precision
+        if scaler is not None:
+            with autocast():
+                log_probs, output_lengths = model(images)
+                output_lengths = output_lengths.to(device)
+                loss = criterion(log_probs, targets, output_lengths, target_lengths)
+                loss = loss / accumulation_steps  # Scale loss for gradient accumulation
+        else:
+            log_probs, output_lengths = model(images)
+            output_lengths = output_lengths.to(device)
+            loss = criterion(log_probs, targets, output_lengths, target_lengths)
+            loss = loss / accumulation_steps  # Scale loss for gradient accumulation
         
         # Check for NaN loss
         if torch.isnan(loss):
@@ -108,16 +119,26 @@ def train_one_epoch(model, train_loader, criterion, optimizer, encoder, device, 
             continue
         
         # Backward pass
-        optimizer.zero_grad()
-        loss.backward()
+        if scaler is not None:
+            scaler.scale(loss).backward()
+        else:
+            loss.backward()
         
-        # Gradient clipping (prevents exploding gradients)
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+        # Only step optimizer every N batches
+        if (batch_idx + 1) % accumulation_steps == 0:
+            if scaler is not None:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+                optimizer.step()
+            
+            optimizer.zero_grad()
         
-        optimizer.step()
-        
-        # Track loss
-        total_loss += loss.item()
+        # Track loss (unscale for logging)
+        total_loss += loss.item() * accumulation_steps
         
         # Print progress every 10 batches
         if (batch_idx + 1) % 10 == 0:
@@ -126,9 +147,21 @@ def train_one_epoch(model, train_loader, criterion, optimizer, encoder, device, 
             batches_per_sec = (batch_idx + 1) / elapsed
             
             print(f"  Batch [{batch_idx+1}/{num_batches}] | "
-                  f"Loss: {loss.item():.4f} | "
+                  f"Loss: {loss.item() * accumulation_steps:.4f} | "
                   f"Avg Loss: {avg_loss_so_far:.4f} | "
                   f"Speed: {batches_per_sec:.2f} batch/s")
+    
+    # Handle any remaining gradients if total batches not divisible by accumulation_steps
+    if len(train_loader) % accumulation_steps != 0:
+        if scaler is not None:
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+            optimizer.step()
+        optimizer.zero_grad()
     
     avg_loss = total_loss / num_batches
     epoch_time = time.time() - start_time
@@ -236,7 +269,8 @@ def train_model(
     num_lstm_layers=2,
     image_size=(256, 64),
     save_dir='models',
-    resume_from=None
+    resume_from=None,
+    use_amp=True
 ):
     """
     Main training function
@@ -276,7 +310,9 @@ def train_model(
         data_dir='data',
         batch_size=batch_size,
         image_size=image_size,
-        num_workers=2
+        num_workers=2,
+        persistent_workers=True,
+        prefetch_factor=2
     )
     
     print(f"\nDataset sizes:")
@@ -296,12 +332,18 @@ def train_model(
         num_lstm_layers=num_lstm_layers,
         device=device.type
     )
+    # Compile model for extra speedup (PyTorch 2.0+)
+    if hasattr(torch, 'compile'):
+        print("Compiling model with torch.compile()...")
+        model = torch.compile(model)
     
     # Loss function (CTC Loss)
     criterion = nn.CTCLoss(blank=encoder.blank_label, zero_infinity=True)
     
     # Optimizer (Adam)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+
+    scaler = GradScaler() if use_amp else None
     
     # Learning rate scheduler (reduce LR when validation loss plateaus)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
@@ -344,7 +386,9 @@ def train_model(
         
         # Train
         train_loss = train_one_epoch(
-            model, train_loader, criterion, optimizer, encoder, device, epoch+1
+            model, train_loader, criterion, optimizer, encoder, device, epoch+1,
+            scaler=scaler,
+            accumulation_steps=1 # change from 1 to 4 if hitting GPU memory limits
         )
         
         # Validate
@@ -408,12 +452,12 @@ def train_model(
     print(f"Models saved to: {save_path}")
     print(f"{'='*60}\n")
     
-    return model, history
-
+    # Return additional objects needed for final testing
+    return model, history, encoder, criterion, device, test_loader
 
 if __name__ == "__main__":
-    # Train the model
-    model, history = train_model(
+    # Train the model and get objects needed for testing
+    model, history, label_encoder, criterion, device, test_loader = train_model(
         batch_size=32, # Reduce to 8 or 4 if running out of memory
         num_epochs=100,
         learning_rate=0.003,
@@ -422,6 +466,25 @@ if __name__ == "__main__":
         image_size=(256, 64),
         save_dir='models'
     )
+
+    # check test results - load checkpoint properly and map to device
+    checkpoint = torch.load('models/best_model.pth', map_location=device)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.to(device)
+    model.eval()
+
+    # Run validation on test set (provide an epoch value)
+    test_epoch = len(history.get('val_loss', []))
+    test_loss, test_char_acc, test_seq_acc = validate(
+        model, test_loader, criterion, label_encoder, device, test_epoch
+    )
+
+    print(f"\n{'='*60}")
+    print(f"FINAL TEST SET RESULTS")
+    print(f"{'='*60}")
+    print(f"Test Loss: {test_loss:.4f}")
+    print(f"Character Accuracy: {test_char_acc:.2f}%")
+    print(f"Sequence Accuracy: {test_seq_acc:.2f}%")
     
     print("\nTraining finished! Next steps:")
     print("1. Check models folder for saved models")

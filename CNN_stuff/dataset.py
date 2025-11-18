@@ -196,7 +196,9 @@ def create_dataloaders(
     data_dir: str,
     batch_size: int = 16,
     image_size: tuple = (256, 64),
-    num_workers: int = 2
+    num_workers: int = 2,
+    persistent_workers: bool = False,
+    prefetch_factor: int = 2
 ):
     print("Creating dataloaders...")
 
@@ -224,8 +226,15 @@ def create_dataloaders(
         test_dataset = ScaleOCRDataset(str(test_csv), images_dir=str(images_dir), transform=val_transform, validate=True)
 
     
-    create_dataloader = partial(DataLoader, batch_size=batch_size, shuffle=False,
-                                num_workers=num_workers, pin_memory=torch.cuda.is_available())
+    create_dataloader = partial(
+        DataLoader, 
+        batch_size=batch_size, 
+        shuffle=False,
+        num_workers=num_workers, 
+        pin_memory=torch.cuda.is_available(),
+        persistent_workers=persistent_workers if num_workers > 0 else False,
+        prefetch_factor=prefetch_factor if num_workers > 0 else None
+    )
 
     train_loader = create_dataloader(train_dataset, shuffle=True)
     val_loader = create_dataloader(val_dataset)
