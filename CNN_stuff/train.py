@@ -1,11 +1,9 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 from pathlib import Path
 import time
-from datetime import datetime
 import json
 
 from dataset import create_dataloaders
@@ -13,21 +11,21 @@ from model import create_model
 
 # note: this file is largely vibe coded. I wish I had the time to understand it, but oh well
 """
-requires the dir structure to be like: 
+requires you to run from a terminal within CNN_stuff and the dir structure to be like: 
 CNN_stuff/
 ├── dataset.py
 ├── model.py
 ├── train.py
 ├── data/
-│   ├── train/
-│   │   ├── images/
-│   │   └── labels.csv
-│   ├── val/
-│   │   ├── images/
-│   │   └── labels.csv
-│   └── test/
-│       ├── images/
-│       └── labels.csv
+│   ├── images/
+│   │   └── (frame images from all relevant videos)
+│   │   └── 0715_01_0.jpg
+│   │   └── 0716_02_250.jpg
+│   │   └── ...
+│   ├── labels/
+│   │   ├── test_labels.csv
+│   │   └── train_labels.csv
+│   │   └── val_labels.csv
 └── models/             (will be created automatically)
 """
 
@@ -231,9 +229,6 @@ def validate(model, val_loader, criterion, encoder, device, epoch):
 
 
 def train_model(
-    train_dir='data/train',
-    val_dir='data/val',
-    test_dir='data/test',
     batch_size=16,
     num_epochs=50,
     learning_rate=0.001,
@@ -278,7 +273,7 @@ def train_model(
     # Create dataloaders
     print("Loading data...")
     train_loader, val_loader, test_loader, train_dataset, val_dataset, test_dataset = create_dataloaders(
-        data_dir='CNN_stuff/data',
+        data_dir='data',
         batch_size=batch_size,
         image_size=image_size,
         num_workers=2
@@ -419,9 +414,6 @@ def train_model(
 if __name__ == "__main__":
     # Train the model
     model, history = train_model(
-        train_dir='data/train',
-        val_dir='data/val',
-        test_dir='data/test',
         batch_size=32, # Reduce to 8 or 4 if running out of memory
         num_epochs=100,
         learning_rate=0.003,

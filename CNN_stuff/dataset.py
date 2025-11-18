@@ -52,7 +52,7 @@ class ScaleOCRDataset(Dataset):
         for i in range(len(self.labels_df)):
             row = self.labels_df.iloc[i]
             frame_num = row['frame_number'] 
-            weight = row.get('weight', None)
+            weight = row['weight']
             filename = f"{row['filename']}_{frame_num}{self.file_extension}"
             img_path = self.images_dir / filename
 
@@ -156,7 +156,7 @@ def get_transforms(image_size=(256, 64), is_train=False):
             # augmentation
             A.Rotate(limit=5, p=0.5),
             A.RandomBrightnessContrast(brightness_limit=0.3, contrast_limit=0.3, p=0.7),
-            A.GaussNoise(var_limit=(10.0, 50.0), p=0.5), # type: ignore
+            A.GaussNoise(p=0.5),
             A.RandomGamma(gamma_limit=(80, 120), p=0.3),
             A.Sharpen(alpha=(0.2, 0.5), p=0.3),
 
@@ -193,10 +193,7 @@ def get_transforms(image_size=(256, 64), is_train=False):
             ToTensorV2(),
         ])
 def create_dataloaders(
-    train_dir: Optional[str] = None,
-    val_dir: Optional[str] = None,
-    test_dir: Optional[str] = None,
-    data_dir: Optional[str] = None,
+    data_dir: str,
     batch_size: int = 16,
     image_size: tuple = (256, 64),
     num_workers: int = 2
@@ -206,42 +203,26 @@ def create_dataloaders(
     train_transform = get_transforms(image_size, is_train=True)
     val_transform = get_transforms(image_size, is_train=False)
 
-    if data_dir:
-        images_dir = Path(data_dir) / 'images'
-        labels_dir = Path(data_dir) / 'labels'
-        train_csv = labels_dir / 'train_labels.csv'
-        val_csv = labels_dir / 'val_labels.csv'
-        test_csv = labels_dir / 'test_labels.csv'
+    images_dir = Path(data_dir) / 'images'
+    labels_dir = Path(data_dir) / 'labels'
+    train_csv = labels_dir / 'train_labels.csv'
+    val_csv = labels_dir / 'val_labels.csv'
+    test_csv = labels_dir / 'test_labels.csv'
 
-        if not images_dir.exists():
-            raise FileNotFoundError(f"Images directory not found: {images_dir}")
-        if not train_csv.exists():
-            raise FileNotFoundError(f"Train labels CSV not found: {train_csv}")
-        if not val_csv.exists():
-            raise FileNotFoundError(f"Val labels CSV not found: {val_csv}")
+    if not images_dir.exists():
+        raise FileNotFoundError(f"Images directory not found: {images_dir}")
+    if not train_csv.exists():
+        raise FileNotFoundError(f"Train labels CSV not found: {train_csv}")
+    if not val_csv.exists():
+        raise FileNotFoundError(f"Val labels CSV not found: {val_csv}")
 
-        train_dataset = ScaleOCRDataset(str(train_csv), images_dir=str(images_dir), transform=train_transform, validate=True)
-        val_dataset = ScaleOCRDataset(str(val_csv), images_dir=str(images_dir), transform=val_transform, validate=True)
+    train_dataset = ScaleOCRDataset(str(train_csv), images_dir=str(images_dir), transform=train_transform, validate=True)
+    val_dataset = ScaleOCRDataset(str(val_csv), images_dir=str(images_dir), transform=val_transform, validate=True)
 
-        test_dataset = None
-        if test_csv.exists():
-            test_dataset = ScaleOCRDataset(str(test_csv), images_dir=str(images_dir), transform=val_transform, validate=True)
-    else:
-        # If not using data_dir, expect CSV file paths passed in train_dir/val_dir
-        if not train_dir or not val_dir:
-            raise ValueError("Please provide either data_dir or both train_dir and val_dir CSV file paths")
-        train_csv = Path(train_dir)
-        val_csv = Path(val_dir)
-        test_csv = Path(test_dir) if test_dir else None
-        # Try to infer images_dir: if CSV is in labels/ subdir, assume images in parent/images
-        parent = train_csv.parent
-        if parent.name == 'labels' and (parent.parent / 'images').exists():
-            images_dir = parent.parent / 'images'
-        elif (parent / 'images').exists():
-            images_dir = parent / 'images'
-        else:
-            # fallback to CSV parent as images dir
-            images_dir = parent
+    test_dataset = None
+    if test_csv.exists():
+        test_dataset = ScaleOCRDataset(str(test_csv), images_dir=str(images_dir), transform=val_transform, validate=True)
+
     
     create_dataloader = partial(DataLoader, batch_size=batch_size, shuffle=False,
                                 num_workers=num_workers, pin_memory=torch.cuda.is_available())

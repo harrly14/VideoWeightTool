@@ -33,6 +33,10 @@ class ScaleOCRModel(nn.Module):
         self.hidden_size = hidden_size
         self.num_lstm_layers = num_lstm_layers
         
+        # Character mapping for decoding
+        self.char_map = {str(i): i for i in range(10)}
+        self.char_map['.'] = 10
+        
         # Character set: 0-9 and '.'
         # CTC needs an extra "blank" character, so output is num_chars + 1
         self.num_classes = num_chars + 1  # 12 classes total
@@ -200,7 +204,6 @@ class ScaleOCRModel(nn.Module):
         Returns:
             String representation
         """
-        # Assuming char_map is defined in __init__ (add it if not)
         if not hasattr(self, 'char_map'):
             self.char_map = {str(i): i for i in range(10)}
             self.char_map['.'] = 10
@@ -221,8 +224,7 @@ class ScaleOCRModel(nn.Module):
             List of decoded strings
         """
         # default blank is last class
-        if blank_label is None:
-            blank_label = self.num_classes - 1
+        blank_label = self.num_classes - 1
 
         # Get most likely character at each time step
         _, preds = torch.max(log_probs, dim=2)  # (seq_len, batch)
