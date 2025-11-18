@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.cuda.amp import autocast, GradScaler
+from torch import amp
 import numpy as np
 from pathlib import Path
 import time
@@ -102,7 +102,7 @@ def train_one_epoch(model, train_loader, criterion, optimizer, encoder, device, 
         
         # Forward pass with automatic mixed precision
         if scaler is not None:
-            with autocast():
+            with amp.autocast(device_type=device.type):
                 log_probs, output_lengths = model(images)
                 output_lengths = output_lengths.to(device)
                 loss = criterion(log_probs, targets, output_lengths, target_lengths)
@@ -332,10 +332,13 @@ def train_model(
         num_lstm_layers=num_lstm_layers,
         device=device.type
     )
-    # Compile model for extra speedup (PyTorch 2.0+)
+    # Try compiling model (PyTorch 2.0+). don't fail if compile raises.
     if hasattr(torch, 'compile'):
-        print("Compiling model with torch.compile()...")
-        model = torch.compile(model)
+        try:
+            print("Attempting to compile model with torch.compile()...")
+            model = torch.compile(model)
+        except Exception as e:
+            print(f"Warning: torch.compile() failed, continuing without compile: {e}")
     
     # Loss function (CTC Loss)
     criterion = nn.CTCLoss(blank=encoder.blank_label, zero_infinity=True)
@@ -343,7 +346,7 @@ def train_model(
     # Optimizer (Adam)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
-    scaler = GradScaler() if use_amp else None
+    scaler = amp.GradScaler(device=device.type) if use_amp else None
     
     # Learning rate scheduler (reduce LR when validation loss plateaus)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
