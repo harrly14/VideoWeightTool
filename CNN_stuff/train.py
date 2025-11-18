@@ -459,8 +459,8 @@ if __name__ == "__main__":
     # Train the model and get objects needed for testing
     model, history, label_encoder, criterion, device, test_loader = train_model(
         batch_size=32, # Reduce to 8 or 4 if running out of memory
-        num_epochs=100,
-        learning_rate=0.003,
+        num_epochs=400,
+        learning_rate=0.00025,
         hidden_size=256,
         num_lstm_layers=2,
         image_size=(256, 64),
