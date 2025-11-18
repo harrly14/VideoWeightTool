@@ -5,11 +5,12 @@ from albumentations.pytorch import ToTensorV2
 import pandas as pd
 import cv2
 import numpy as np
+from typing import Optional
 from pathlib import Path
 from functools import partial
 
 class ScaleOCRDataset(Dataset):
-    def __init__(self, images_dir, labels_csv, file_extension='.jpg', 
+    def __init__(self, labels_csv, images_dir='data/images', file_extension='.jpg', 
                  transform=None, validate=True, verbose=True, weight_range=(0.0, 100.0)):
         self.images_dir = Path(images_dir)
         self.file_extension = file_extension
@@ -51,7 +52,7 @@ class ScaleOCRDataset(Dataset):
         for i in range(len(self.labels_df)):
             row = self.labels_df.iloc[i]
             frame_num = row['frame_number'] 
-            weight = row['weight']
+            weight = row.get('weight', None)
             filename = f"{row['filename']}_{frame_num}{self.file_extension}"
             img_path = self.images_dir / filename
 
@@ -67,7 +68,7 @@ class ScaleOCRDataset(Dataset):
             try:
                 float_weight = float(weight)
                 if not self.weight_range[0] < float_weight < self.weight_range[1]:
-                    corrupt_files.append((i, filename, weight))
+                    invalid_weights.append((i, filename, weight))
             except (ValueError, TypeError):
                 invalid_weights.append((i, filename, weight))
 
@@ -129,8 +130,8 @@ class ScaleOCRDataset(Dataset):
     def __getitem__(self, index):
         row = self.labels_df.iloc[index]
         frame_num = row['frame_number'] 
-        weight = row['weight']
-        weight_formatted = f"{float(weight):.3f}"
+        weight = float(row['weight'])
+        weight_formatted = f"{weight:.3f}"
         filename = f"{row['filename']}_{frame_num}{self.file_extension}"
 
         img_path = self.images_dir / filename
@@ -155,7 +156,7 @@ def get_transforms(image_size=(256, 64), is_train=False):
             # augmentation
             A.Rotate(limit=5, p=0.5),
             A.RandomBrightnessContrast(brightness_limit=0.3, contrast_limit=0.3, p=0.7),
-            A.GaussNoise(var_limit=(10.0, 50.0), p=0.5),
+            A.GaussNoise(var_limit=(10.0, 50.0), p=0.5), # type: ignore
             A.RandomGamma(gamma_limit=(80, 120), p=0.3),
             A.Sharpen(alpha=(0.2, 0.5), p=0.3),
 
@@ -191,53 +192,74 @@ def get_transforms(image_size=(256, 64), is_train=False):
             A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
             ToTensorV2(),
         ])
-def create_dataloaders(train_dir, val_dir, test_dir=None, batch_size=16, image_size=(256,64), num_workers=2):
+def create_dataloaders(
+    train_dir: Optional[str] = None,
+    val_dir: Optional[str] = None,
+    test_dir: Optional[str] = None,
+    data_dir: Optional[str] = None,
+    batch_size: int = 16,
+    image_size: tuple = (256, 64),
+    num_workers: int = 2
+):
     print("Creating dataloaders...")
 
     train_transform = get_transforms(image_size, is_train=True)
     val_transform = get_transforms(image_size, is_train=False)
 
-    train_dataset = ScaleOCRDataset(
-        f"{train_dir}/images", 
-        f"{train_dir}/labels.csv",
-        transform=train_transform,
-        validate=True
-    )
+    if data_dir:
+        images_dir = Path(data_dir) / 'images'
+        labels_dir = Path(data_dir) / 'labels'
+        train_csv = labels_dir / 'train_labels.csv'
+        val_csv = labels_dir / 'val_labels.csv'
+        test_csv = labels_dir / 'test_labels.csv'
+
+        if not images_dir.exists():
+            raise FileNotFoundError(f"Images directory not found: {images_dir}")
+        if not train_csv.exists():
+            raise FileNotFoundError(f"Train labels CSV not found: {train_csv}")
+        if not val_csv.exists():
+            raise FileNotFoundError(f"Val labels CSV not found: {val_csv}")
+
+        train_dataset = ScaleOCRDataset(str(train_csv), images_dir=str(images_dir), transform=train_transform, validate=True)
+        val_dataset = ScaleOCRDataset(str(val_csv), images_dir=str(images_dir), transform=val_transform, validate=True)
+
+        test_dataset = None
+        if test_csv.exists():
+            test_dataset = ScaleOCRDataset(str(test_csv), images_dir=str(images_dir), transform=val_transform, validate=True)
+    else:
+        # If not using data_dir, expect CSV file paths passed in train_dir/val_dir
+        if not train_dir or not val_dir:
+            raise ValueError("Please provide either data_dir or both train_dir and val_dir CSV file paths")
+        train_csv = Path(train_dir)
+        val_csv = Path(val_dir)
+        test_csv = Path(test_dir) if test_dir else None
+        # Try to infer images_dir: if CSV is in labels/ subdir, assume images in parent/images
+        parent = train_csv.parent
+        if parent.name == 'labels' and (parent.parent / 'images').exists():
+            images_dir = parent.parent / 'images'
+        elif (parent / 'images').exists():
+            images_dir = parent / 'images'
+        else:
+            # fallback to CSV parent as images dir
+            images_dir = parent
     
-    val_dataset = ScaleOCRDataset(
-        f"{val_dir}/images", 
-        f"{val_dir}/labels.csv",
-        transform=val_transform,
-        validate=True
-    )
-    
-    test_dataset = None
-    if test_dir:
-        test_dataset = ScaleOCRDataset(
-            f"{test_dir}/images", 
-            f"{test_dir}/labels.csv",
-            transform=val_transform,
-            validate=True
-        )
-    
-    # DataLoaders
-    create_dataloader = partial(DataLoader, batch_size=batch_size, shuffle=False, 
+    create_dataloader = partial(DataLoader, batch_size=batch_size, shuffle=False,
                                 num_workers=num_workers, pin_memory=torch.cuda.is_available())
-    
+
     train_loader = create_dataloader(train_dataset, shuffle=True)
     val_loader = create_dataloader(val_dataset)
     test_loader = None
     if test_dataset:
         test_loader = create_dataloader(test_dataset)
-    
-    print(f"Dataloaders created:")
-    print(f"  Train: {len(train_loader)} batches")
-    print(f"  Val: {len(val_loader)} batches")
-    if test_loader:
-        print(f"  Test: {len(test_loader)} batches")
-    
-    return train_loader, val_loader, test_loader, train_dataset, val_dataset, test_dataset
 
+    print(f"Dataloaders created:")
+    print(f"  Train: {len(train_loader)} batches ({len(train_dataset)} samples)")
+    print(f"  Val: {len(val_loader)} batches ({len(val_dataset)} samples)")
+    if test_loader:
+        test_samples = len(test_dataset) if test_dataset is not None else 0
+        print(f"  Test: {len(test_loader)} batches ({test_samples} samples)")
+
+    return train_loader, val_loader, test_loader, train_dataset, val_dataset, test_dataset
 
 
 # for testing purposes:  
@@ -247,9 +269,7 @@ if __name__ == "__main__":
     print("="*60 + "\n")
     
     train_loader, val_loader, test_loader, _, _, _ = create_dataloaders(
-        train_dir='data/train',
-        val_dir='data/val',
-        test_dir='data/test',
+        data_dir="CNN_stuff/data",
         batch_size=8,
         image_size=(256, 64)
     )

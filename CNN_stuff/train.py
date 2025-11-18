@@ -278,12 +278,10 @@ def train_model(
     # Create dataloaders
     print("Loading data...")
     train_loader, val_loader, test_loader, train_dataset, val_dataset, test_dataset = create_dataloaders(
-        train_dir=train_dir,
-        val_dir=val_dir,
-        test_dir=test_dir,
+        data_dir='CNN_stuff/data',
         batch_size=batch_size,
         image_size=image_size,
-        num_workers=1
+        num_workers=2
     )
     
     print(f"\nDataset sizes:")
@@ -424,9 +422,9 @@ if __name__ == "__main__":
         train_dir='data/train',
         val_dir='data/val',
         test_dir='data/test',
-        batch_size=8, # Reduce to 8 or 4 if running out of memory
-        num_epochs=50,
-        learning_rate=0.001,
+        batch_size=32, # Reduce to 8 or 4 if running out of memory
+        num_epochs=100,
+        learning_rate=0.003,
         hidden_size=256,
         num_lstm_layers=2,
         image_size=(256, 64),
