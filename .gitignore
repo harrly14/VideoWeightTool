@@ -7,3 +7,4 @@ __pycache__/
 .env
 outputs/
 CNN_stuff/models
+CNN_stuff/videos
