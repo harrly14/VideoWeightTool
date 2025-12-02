@@ -186,38 +186,38 @@ def get_video_metadata(video_path):
     return metadata
 
 def get_roi(frame, roi_coords=None):
-    """Get region of interest (scale display area)"""
     if roi_coords:
         try:
-            # Parse "x,y,w,h" string or tuple
             if isinstance(roi_coords, str):
                 x, y, w, h = map(int, roi_coords.split(','))
             else:
                 x, y, w, h = roi_coords
-                
-            # Ensure bounds
             h_img, w_img = frame.shape[:2]
             x = max(0, min(x, w_img))
             y = max(0, min(y, h_img))
             w = max(1, min(w, w_img - x))
             h = max(1, min(h, h_img - y))
-            
             return frame[y:y+h, x:x+w]
         except Exception as e:
-            print(f"⚠ Warning: Error processing ROI: {e}. Using full frame.")
+            print(f"Warning: Error processing ROI: {e}. Using full frame.")
             return frame
     return frame
 
+def apply_clahe(frame):
+    """Apply CLAHE preprocessing to match training data pipeline."""
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    enhanced = clahe.apply(gray)
+    bgr_enhanced = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
+    return bgr_enhanced
+
 def preprocess_frame(frame, transform):
-    """Preprocess frame for model input"""
-    # Convert BGR to RGB (Albumentations expects RGB)
-    image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    
-    # Apply transform
+    """Preprocess frame for model input with CLAHE enhancement."""
+    enhanced = apply_clahe(frame)
+    image = cv2.cvtColor(enhanced, cv2.COLOR_BGR2RGB)
     augmented = transform(image=image)
     image_tensor = augmented['image']
-    
-    return image_tensor  # Don't add batch dimension here - we'll stack in batch
+    return image_tensor
 
 # ============================================================
 # INFERENCE
@@ -591,7 +591,7 @@ def create_annotated_video(video_path, results, output_path, roi_coords=None):
     out = None
     for codec, name in fourcc_options:
         try:
-            fourcc = cv2.VideoWriter_fourcc(*codec)
+            fourcc = cv2.VideoWriter_fourcc(*codec) # type: ignore
             out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
             if out.isOpened():
                 print(f"  ✓ Using {name} codec")

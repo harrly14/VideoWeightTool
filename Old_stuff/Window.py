@@ -10,7 +10,7 @@ from PyQt5.QtCore import Qt, QRegExp, QEvent, QTimer
 from qtrangeslider import QRangeSlider
 from functools import partial
 from VideoParams import VideoParams
-from CropLabel import CropImageLabel
+from Old_stuff.CropLabel import CropImageLabel
 
 
 class EditWindow(QWidget): 

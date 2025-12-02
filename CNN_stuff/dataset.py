@@ -1,13 +1,35 @@
-import torch
-from torch.utils.data import Dataset, DataLoader
-import albumentations as A
-from albumentations.pytorch import ToTensorV2
-import pandas as pd
 import cv2
+import torch
+import pandas as pd
 import numpy as np
+import albumentations as A
+from torch.utils.data import Dataset, DataLoader
+from albumentations.pytorch import ToTensorV2
 from typing import Optional
 from pathlib import Path
 from functools import partial
+
+
+def apply_clahe_grayscale(image: np.ndarray, **kwargs) -> np.ndarray:
+    """
+    Apply CLAHE using grayscale conversion to match OpenCV inference pipeline.
+    
+    This ensures training uses the exact same CLAHE implementation as inference
+    (process_video.py), avoiding discrepancies from Albumentations' LAB-based CLAHE.
+    
+    Pipeline: RGB -> Grayscale -> CLAHE -> RGB (replicated channels)
+    """
+    # Convert to grayscale
+    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    
+    # Apply CLAHE (same parameters as process_video.py)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    enhanced = clahe.apply(gray)
+    
+    # Convert back to RGB (replicate grayscale across channels)
+    rgb_enhanced = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2RGB)
+    
+    return rgb_enhanced
 
 class ScaleOCRDataset(Dataset):
     def __init__(self, labels_csv, images_dir='data/images', file_extension='.jpg', 
@@ -152,9 +174,15 @@ def get_transforms(image_size=(256, 64), is_train=False):
     
     if is_train:
         # augmentation + resizing w padding
+        # CLAHE applied via custom function to match OpenCV inference pipeline
         return A.Compose([ # type: ignore
+            # CLAHE using grayscale (matches inference preprocessing exactly)
+            A.Lambda(image=apply_clahe_grayscale, p=1.0),
+            
             # augmentation
             A.Rotate(limit=5, p=0.5),
+            # Translation augmentation (shift x/y by up to 10%)
+            A.Affine(translate_percent=0.1, p=0.5),
             A.RandomBrightnessContrast(brightness_limit=0.3, contrast_limit=0.3, p=0.7),
             A.GaussNoise(p=0.5),
             A.RandomGamma(gamma_limit=(80, 120), p=0.3),
@@ -180,6 +208,9 @@ def get_transforms(image_size=(256, 64), is_train=False):
         ])
     else: 
         return A.Compose([
+            # CLAHE using grayscale (matches inference preprocessing exactly)
+            A.Lambda(image=apply_clahe_grayscale, p=1.0),
+            
             A.LongestMaxSize(max_size=max(target_width, target_height)),
             A.PadIfNeeded(
                 min_height=target_height,
