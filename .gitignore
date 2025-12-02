@@ -6,6 +6,5 @@ __pycache__/
 .pytest_cache/
 .env
 outputs/
-CNN_stuff/models
-CNN_stuff/videos
+Old_stuff/videos
 Old_stuff/models
