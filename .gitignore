@@ -6,5 +6,4 @@ __pycache__/
 .pytest_cache/
 .env
 outputs/
-Old_stuff/videos
-Old_stuff/models
+Archive/*
