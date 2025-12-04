@@ -1,5 +1,5 @@
 import sys
-sys.path.append('/home/sully/Desktop/projects/VideoWeightTool')
+sys.path.append('/home/sully/Desktop/projects/VideoWeightTool/Manual workflow')
 
 from dataset import ScaleOCRDataset
 train_dataset = ScaleOCRDataset('data/train/images', 'data/train/labels.csv', validate=False, verbose=False)
