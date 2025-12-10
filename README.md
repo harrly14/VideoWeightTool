@@ -1,85 +1,193 @@
-# Video Weight Tool
+# Scale OCR - Video Weight Tool
 
-A simple Python app to speed up processing weights from scale videos. The app also allows real-time trimming, cropping, and editing of videos.
+A machine learning system for automatically reading weight values from seven-segment scale displays in video footage. Uses a CNN+LSTM+CTC architecture trained on labeled frame data.
+
+## Overview
+
+This project provides:
+- **Model Training**: Train a CRNN (CNN + Bidirectional LSTM) model with CTC loss to recognize weight values like "7.535" from scale display images
+- **Video Inference**: Process videos to extract frame-by-frame weight readings with temporal smoothing and confidence scoring
+- **Labeling Tools**: GUI applications to efficiently label training data from video frames
+- **Data Pipeline**: Scripts to extract frames, split datasets, and validate models
 
 ## Requirements
-- Python 3.8-3.13 (recommended: Python 3.11 or 3.12)
+
+- Python 3.8–3.12 (recommended: 3.11 or 3.12)
+- CUDA-capable GPU (recommended for training)
 - ffmpeg (system installation required)
 
 ## Installation
 
 1. Clone the repository:
-```bash
+\`\`\`bash
 git clone https://github.com/harrly14/VideoWeightTool
 cd VideoWeightTool
-```
+\`\`\`
 
-2. Create a virtual environment (recommended):
-
-This program has several library requirements. To avoid conflicts with system libraries, creating a virtual environment is recommended.
-
-On Linux/macOS:
-```bash
+2. Create a virtual environment:
+\`\`\`bash
+# Linux/macOS
 python -m venv .venv
 source .venv/bin/activate
-```
 
-On Windows: 
-```bash
+# Windows
 python -m venv .venv
 .venv\Scripts\activate
-```
+\`\`\`
 
 3. Install dependencies:
-```bash
+\`\`\`bash
 pip install -r requirements.txt
-```
+\`\`\`
 
-4. Install ffmpeg on your system:
-- **Windows:** Download from https://ffmpeg.org/ or use `choco install ffmpeg`
-- **macOS:** `brew install ffmpeg`
-- **Linux:** `sudo apt install ffmpeg` (Ubuntu/Debian) or `sudo yum install ffmpeg` (CentOS/RHEL)
+4. Install ffmpeg:
+- **Linux**: \`sudo apt install ffmpeg\`
+- **macOS**: \`brew install ffmpeg\`
+- **Windows**: \`choco install ffmpeg\` or download from https://ffmpeg.org/
 
-5. Verify ffmpeg installation: 
-```bash
-ffmpeg -version
-```
+## Project Structure
 
-## Usage
-```bash
+\`\`\`
+VideoWeightTool/
+├── train.py                 # Model training script
+├── model.py                 # CNN+LSTM+CTC architecture
+├── dataset.py               # Dataset class and data loading
+├── process_video.py         # Video inference script
+├── requirements.txt
+│
+├── data/
+│   ├── images/              # Training images (created by extract_frames.py)
+│   ├── labels/              # Train/val/test CSVs (created by split_data.py)
+│   └── all_data.csv         # Master labels file
+│
+├── models/                  # Saved model checkpoints (created during training)
+│
+├── training_scripts/
+│   ├── extract_frames.py    # Extract and crop frames from videos
+│   ├── split_data.py        # Split labels into train/val/test
+│   └── validate.py          # Evaluate model on test set
+│
+├── labelling_workflow/      # GUI tool for batch frame labeling
+│   ├── main.py
+│   └── USAGE_GUIDE.md
+│
+├── manual_workflow/         # GUI tool for video editing and manual labeling
+│   └── main.py
+│
+└── mini_scripts/            # Utility scripts (ad-hoc, not polished)
+\`\`\`
+
+## Workflow
+
+### 1. Label Training Data
+
+Use the labeling tool to create ground-truth labels:
+
+\`\`\`bash
+cd labelling_workflow
 python main.py
-```
+\`\`\`
+
+See \`labelling_workflow/USAGE_GUIDE.md\` for detailed instructions.
+
+### 2. Extract Frames
+
+Extract cropped frames from labeled videos:
+
+\`\`\`bash
+python training_scripts/extract_frames.py --video_dir /path/to/videos
+\`\`\`
+
+This creates images in \`data/images/\`.
+
+### 3. Split Dataset
+
+Split labels into train/validation/test sets:
+
+\`\`\`bash
+python training_scripts/split_data.py
+\`\`\`
+
+This creates CSV files in \`data/labels/\`.
+
+### 4. Train Model
+
+Train the Scale OCR model:
+
+\`\`\`bash
+python train.py
+\`\`\`
+
+Key training parameters (edit in \`train.py\`):
+- \`batch_size\`: 32 (reduce to 8-16 if GPU memory limited)
+- \`num_epochs\`: 400
+- \`learning_rate\`: 0.00025
+- \`image_size\`: (256, 64)
+
+Models are saved to \`models/\`:
+- \`best_model.pth\` - Lowest validation loss
+- \`best_accuracy_model.pth\` - Highest sequence accuracy
+- \`latest_model.pth\` - Most recent checkpoint
+
+### 5. Run Inference
+
+Process a video to extract weight readings:
+
+\`\`\`bash
+python process_video.py --video path/to/video.mp4 --output weights.csv
+\`\`\`
+
+Options:
+\`\`\`bash
+# Specify ROI (region of interest)
+python process_video.py --video video.mp4 --roi 100,50,400,150
+
+# Use conservative mode (flags uncertain predictions)
+python process_video.py --video video.mp4 --conservative
+
+# Compare against ground-truth
+python process_video.py --video video.mp4 --ground-truth gt.csv
+
+# Save annotated video
+python process_video.py --video video.mp4 --save-video
+\`\`\`
+
+## Model Architecture
+
+The model uses a CRNN (Convolutional Recurrent Neural Network) architecture:
+
+1. **CNN Backbone**: 6 convolutional layers extract visual features from 64×256 input images
+2. **Bidirectional LSTM**: 2-layer LSTM reads features as a sequence
+3. **CTC Decoder**: Connectionist Temporal Classification decodes the output to weight strings
+
+Output format: \`"X.XXX"\` (e.g., "7.535", "12.450")
+
+## Labeling Tools
+
+### Labelling Workflow (Recommended)
+Batch labeling tool with smart frame sampling, zoom/pan, and keyboard shortcuts.
+\`\`\`bash
+cd labelling_workflow && python main.py
+\`\`\`
+
+### Manual Workflow
+Video editing tool with crop, trim, brightness/contrast adjustments.
+\`\`\`bash
+cd manual_workflow && python main.py
+\`\`\`
 
 ## Troubleshooting
 
 ### NumPy installation fails
-
-If you get compilation errors when installing NumPy, try: 
-```bash
+\`\`\`bash
 pip install --only-binary=numpy -r requirements.txt
-```
+\`\`\`
+
+### CUDA out of memory
+Reduce \`batch_size\` in \`train.py\` (try 8 or 16).
 
 ### Python 3.13+
-
-If you are using a very new Python version, some packages may not have pre-built wheels yet. I recommend using Python 3.11 or 3.12 for best compatibility. You can recreate your virtual environment using one of these Python versions by running the following commands: 
-
-On Linux/macOS:
-```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-On Windows: 
-```bash
-python3.11 -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-## Contributing
-
-Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
+Some packages may not have pre-built wheels. Use Python 3.11 or 3.12 instead.
 
 ## License
 

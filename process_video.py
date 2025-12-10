@@ -18,10 +18,6 @@ Recommendation:
     Example:
         python process_video.py --video new_video.mp4 --output new_weights.csv --conservative
 """
-
-# ============================================================
-# IMPORTS
-# ============================================================
 import argparse, cv2, torch, pandas as pd, numpy as np
 import os
 import json
@@ -79,16 +75,13 @@ def load_model(model_path, device):
     """Load trained model from checkpoint (handles wrapped state_dict prefixes)."""
     print(f"Loading model from {model_path}...")
 
-    # Create model architecture
     model = create_model(device=device)
 
-    # Load checkpoint file
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Model file not found: {model_path}")
 
     checkpoint = torch.load(model_path, map_location=device)
 
-    # Extract raw state_dict (support checkpoints saved as {'model_state_dict': ...})
     if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
         raw_state = checkpoint['model_state_dict']
     else:
@@ -111,7 +104,6 @@ def load_model(model_path, device):
     else:
         state_to_load = raw_state
 
-    # Try strict load first, fall back to strict=False
     try:
         model.load_state_dict(state_to_load)
         print("  ✓ Model loaded successfully (strict=True)")
@@ -293,10 +285,8 @@ def process_video_streaming_batched(video_path, model, transform, roi_coords, de
         results, start_frame = load_checkpoint(checkpoint_path)
         if start_frame > 0:
             print(f"  ⏩ Skipping to frame {start_frame}/{total_frames}")
-            # Skip to resume point
             cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
     
-    # Batch processing
     frame_batch = []
     frame_nums = []
     frame_num = start_frame
@@ -312,22 +302,16 @@ def process_video_streaming_batched(video_path, model, transform, roi_coords, de
             if not ret:
                 break
             
-            # Crop to ROI
             cropped = get_roi(frame, roi_coords)
             
-            # Preprocess
             tensor = preprocess_frame(cropped, transform)
             
-            # Add to batch
             frame_batch.append(tensor)
             frame_nums.append(frame_num)
             
-            # Process batch when full or at end of video
             if len(frame_batch) >= batch_size:
-                # Batch inference
                 predictions = predict_weight_batch(model, frame_batch, device)
                 
-                # Store results
                 for fn, (weight, confidence, entropy) in zip(frame_nums, predictions):
                     timestamp = fn / fps if fps > 0 else fn
                     results.append({
@@ -338,20 +322,16 @@ def process_video_streaming_batched(video_path, model, transform, roi_coords, de
                         'entropy': entropy
                     })
                 
-                # Update progress
                 pbar.update(len(frame_batch))
                 
-                # Clear batch
                 frame_batch = []
                 frame_nums = []
                 
-                # Checkpoint saving
                 if checkpoint_path and checkpoint_every > 0 and frame_num % checkpoint_every == 0:
                     save_checkpoint(checkpoint_path, results, frame_num)
             
             frame_num += 1
     
-    # Process any remaining frames in partial batch
     if len(frame_batch) > 0:
         predictions = predict_weight_batch(model, frame_batch, device)
         for fn, (weight, confidence, entropy) in zip(frame_nums, predictions):
@@ -367,7 +347,6 @@ def process_video_streaming_batched(video_path, model, transform, roi_coords, de
     
     cap.release()
     
-    # Save final checkpoint
     if checkpoint_path and checkpoint_every > 0:
         save_checkpoint(checkpoint_path, results, frame_num)
     
@@ -378,28 +357,23 @@ def process_video_streaming_batched(video_path, model, transform, roi_coords, de
 # ============================================================
 def apply_temporal_smoothing(weights, window_size=5):
     """Apply median filter to smooth weight predictions"""
-    # Convert strings to floats, handle errors
     float_weights = []
     for w in weights:
         try:
             float_weights.append(float(w))
         except (ValueError, TypeError):
-            # If conversion fails, use 0.0 as placeholder
             float_weights.append(0.0)
     
     if len(float_weights) == 0:
         return []
             
-    # Ensure window size is odd
     if window_size % 2 == 0:
         window_size += 1
     
-    # Handle edge case: if video is shorter than window
     window_size = min(window_size, len(float_weights))
     if window_size < 3:
         return float_weights
         
-    # Apply median filter
     smoothed = medfilt(float_weights, kernel_size=window_size)
     
     return smoothed
@@ -483,22 +457,18 @@ def load_ground_truth(gt_path):
         print(f"  ⚠ Could not read ground-truth CSV: {e}")
         return None
 
-    # Normalize column names (lowercase)
     df_cols = {c.lower(): c for c in df.columns}
-    # Identify frame/timestamp column
     frame_col = None
     for candidate in ('frame_num', 'frame', 'framenumber'):
         if candidate in df_cols:
             frame_col = df_cols[candidate]
             break
-    # Identify timestamp column
     time_col = None
     for candidate in ('timestamp', 'time'):
         if candidate in df_cols:
             time_col = df_cols[candidate]
             break
 
-    # Identify weight column
     weight_col = None
     for candidate in ('actual_weight', 'actual', 'weight'):
         if candidate in df_cols:
@@ -509,7 +479,6 @@ def load_ground_truth(gt_path):
         print('  ⚠ Ground-truth CSV missing weight column (expecting actual_weight/actual/weight)')
         return None
 
-    # Return dataframe and detected column names
     return {
         'df': df,
         'frame_col': frame_col,
@@ -559,7 +528,6 @@ def save_results_csv(results, output_path, metadata):
     df.to_csv(output_path, index=False)
     print(f"\n✓ Results saved to: {output_path}")
     
-    # Summary statistics
     print("\n" + "="*60)
     print("SUMMARY STATISTICS")
     print("="*60)
@@ -575,7 +543,6 @@ def create_annotated_video(video_path, results, output_path, roi_coords=None):
     """Create video with predicted weights overlaid"""
     cap = cv2.VideoCapture(video_path)
     
-    # Video writer setup
     fps = cap.get(cv2.CAP_PROP_FPS)
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -632,15 +599,12 @@ def create_annotated_video(video_path, results, output_path, roi_coords=None):
                         else:
                             rx, ry, rw, rh = roi_coords
                         cv2.rectangle(frame, (rx, ry), (rx+rw, ry+rh), (255, 0, 0), 2)
-                        # Put text above ROI
                         cv2.putText(frame, text, (rx, ry - 10), 
                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
                     except:
-                        # Fallback to top-left
                         cv2.putText(frame, text, (30, 50), 
                                   cv2.FONT_HERSHEY_SIMPLEX, 1.0, color, 2)
                 else:
-                    # Put text at top left
                     cv2.putText(frame, text, (30, 50), 
                               cv2.FONT_HERSHEY_SIMPLEX, 1.0, color, 2)
                     
@@ -658,14 +622,12 @@ def create_annotated_video(video_path, results, output_path, roi_coords=None):
 def main():
     """Main execution pipeline"""
     
-    # 1. Parse arguments
     args = parse_args()
     
     print("\n" + "="*60)
     print("SCALE OCR VIDEO PROCESSOR")
     print("="*60)
     
-    # 2. Setup
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"\n📱 Device: {device}")
     if torch.cuda.is_available():
@@ -673,14 +635,12 @@ def main():
     print(f"⚙️  Batch size: {args.batch_size}")
     print(f"💾 Checkpoint interval: {args.checkpoint_every} frames" if args.checkpoint_every > 0 else "💾 Checkpoints: disabled")
     
-    # 3. Load model
     try:
         model = load_model(args.model, device)
     except Exception as e:
         print(f"\n✗ Error loading model: {e}")
         return 1
     
-    # 4. Get video metadata (without loading frames)
     print(f"\n📹 Loading video: {args.video}")
     try:
         metadata = get_video_metadata(args.video)
@@ -692,14 +652,11 @@ def main():
         print(f"\n✗ Error loading video: {e}")
         return 1
 
-    # Tip for new videos
     if not args.conservative and args.ground_truth is None:
         print("\nTIP: For new/unlabeled videos, consider running with --conservative to maximize recall and avoid unflagged errors.")
     
-    # 5. Setup preprocessing
     transform = get_transforms(image_size=(256, 64), is_train=False)
     
-    # 6. Process frames (STREAMING + BATCHED - memory efficient + fast!)
     try:
         results, checkpoint_path = process_video_streaming_batched(
             args.video, model, transform, 
@@ -719,7 +676,6 @@ def main():
         traceback.print_exc()
         return 1
     
-    # 7. Apply temporal smoothing
     # Decide smoothing window: explicit --smoothing-window overrides other logic
     if args.smoothing_window is not None:
         smoothing_window = args.smoothing_window
@@ -734,7 +690,6 @@ def main():
     for i, result in enumerate(results):
         result['smoothed_weight'] = smoothed_weights[i]
     
-    # 8. Flag problematic predictions
     print(f"🔍 Flagging problematic predictions...")
 
     # Determine thresholds (strict mode makes flagging aggressive)
@@ -760,7 +715,6 @@ def main():
     sudden_flags = detect_sudden_changes(raw_weights, smoothed_weights, threshold=sudden_thresh)
     format_flags = check_format_flags(raw_weights) if format_check else [False] * len(results)
 
-    # Additional aggressive flags
     entropies = [r.get('entropy', 0.0) for r in results]
     entropy_thresh = 0.3 if args.strict else 0.6
     entropy_flags = calculate_entropy_flags(entropies, threshold=entropy_thresh)
@@ -805,14 +759,11 @@ def main():
                 delta_ok = abs(raw - smooth) <= args.pass_delta
             except Exception:
                 delta_ok = False
-            # Format must be okay if strict formatting is enabled
             fmt_ok = not format_flags[i]
 
             certain = conf_ok and ent_ok and delta_ok and fmt_ok
-            # If not certain, force needs_review True
             if not certain:
                 result['needs_review'] = True
-    # If ground-truth provided, enforce flagging for any mismatch
     gt_info = None
     if args.ground_truth:
         gt_info = load_ground_truth(args.ground_truth)
@@ -828,24 +779,19 @@ def main():
         mismatches_flagged_before = 0
         mismatches_forced = 0
 
-        # Build fast lookup if frame_col exists
         frame_lookup = None
         if frame_col is not None:
             try:
-                # Ensure integer frame keys
                 frame_lookup = {int(r[frame_col]): float(r[weight_col]) for _, r in df_gt.iterrows() if pd.notna(r[frame_col])}
             except Exception:
                 frame_lookup = None
 
         for i, res in enumerate(results):
             actual = None
-            # Try frame match first if requested
             if args.gt_match_by == 'frame' and frame_lookup is not None:
                 actual = frame_lookup.get(int(res['frame_num']), None)
-            # Fallback to timestamp match
             if actual is None and time_col is not None:
                 try:
-                    # find nearest timestamp row
                     diffs = (df_gt[time_col].astype(float) - float(res['timestamp'])).abs()
                     idx = int(diffs.idxmin())
                     actual = float(df_gt.loc[idx, weight_col])
@@ -854,7 +800,6 @@ def main():
 
             if actual is not None:
                 total_gt_found += 1
-                # attach actual to results for debugging/audit
                 res['actual_weight'] = actual
                 try:
                     raw_val = float(res['raw_weight'])
@@ -891,7 +836,6 @@ def main():
         elif total_mismatches > 0:
             print("GT enforcement ensured all mismatches are flagged. Set --gt-tolerance smaller to be stricter.")
     
-    # 9. Save results
     output_path = args.output
     if output_path is None:
         base_name = os.path.splitext(args.video)[0]
@@ -899,13 +843,11 @@ def main():
         
     save_results_csv(results, output_path, metadata)
     
-    # 10. Optional: Create annotated video
     if args.save_video:
         video_output = os.path.splitext(args.video)[0] + '_annotated.mp4'
         print(f"\n🎬 Creating annotated video: {video_output}")
         create_annotated_video(args.video, results, video_output, args.roi)
     
-    # 11. Clean up checkpoint
     if checkpoint_path:
         cleanup_checkpoint(checkpoint_path)
     

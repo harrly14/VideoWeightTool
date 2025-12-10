@@ -188,7 +188,6 @@ def get_transforms(image_size=(256, 64), is_train=False):
             A.RandomGamma(gamma_limit=(80, 120), p=0.3),
             A.Sharpen(alpha=(0.2, 0.5), p=0.3),
 
-            # resize
             A.LongestMaxSize(max_size=max(target_width, target_height)),
 
             A.PadIfNeeded(
@@ -198,10 +197,8 @@ def get_transforms(image_size=(256, 64), is_train=False):
                 fill=(0, 0, 0),
                 position='center'
             ),
-            # crop
             A.CenterCrop(height=target_height, width=target_width),
             
-            # normalize
             A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
             
             ToTensorV2(),

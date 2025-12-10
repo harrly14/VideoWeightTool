@@ -1,5 +1,3 @@
-# note: this file is largely vibe coded. I wish I had the time to understand it, but oh well
-
 """
 model.py - Neural Network Architecture for Scale OCR
 
@@ -33,11 +31,9 @@ class ScaleOCRModel(nn.Module):
         self.hidden_size = hidden_size
         self.num_lstm_layers = num_lstm_layers
         
-        # Character mapping for decoding
         self.char_map = {str(i): i for i in range(10)}
         self.char_map['.'] = 10
         
-        # Character set: 0-9 and '.'
         # CTC needs an extra "blank" character, so output is num_chars + 1
         self.num_classes = num_chars + 1  # 12 classes total
         
@@ -181,7 +177,7 @@ class ScaleOCRModel(nn.Module):
         
         x = x.permute(1, 0, 2)  # (seq_len=64, batch, num_classes=12)
         
-        # Apply log softmax (CTC expects log probabilities)
+        # CTC expects log probabilities
         log_probs = F.log_softmax(x, dim=2)
         
         # Output lengths (all sequences have same length after CNN)
@@ -233,7 +229,6 @@ class ScaleOCRModel(nn.Module):
         decoded_strings = []
         
         for pred in preds:
-            # Convert to list
             pred = pred.tolist()
             
             # CTC collapse: remove repeated characters and blanks
@@ -241,24 +236,19 @@ class ScaleOCRModel(nn.Module):
             prev_char = None
             
             for char_idx in pred:
-                # Skip blanks
                 if char_idx == blank_label:
                     prev_char = None
                     continue
                 
-                # Skip repeated characters
                 if char_idx != prev_char:
                     decoded.append(char_idx)
                     prev_char = char_idx
                 
-                # Stop if we've reached max length
                 if len(decoded) >= max_length:
                     break
             
-            # Convert indices to string
             decoded_str = self.indices_to_string(decoded)
             
-            # Optionally enforce X.XXX format
             if enforce_format:
                 decoded_str = self.enforce_weight_format(decoded_str)
             
@@ -276,17 +266,13 @@ class ScaleOCRModel(nn.Module):
         Returns:
             String in X.XXX format, or original if can't fix
         """
-        # Remove any characters that aren't digits or decimal
         cleaned = ''.join(c for c in text if c.isdigit() or c == '.')
         
-        # If we have at least 4 digits, try to construct X.XXX
         digits_only = ''.join(c for c in cleaned if c.isdigit())
         
         if len(digits_only) >= 4:
-            # Take first 4 digits and format as X.XXX
             return f"{digits_only[0]}.{digits_only[1:4]}"
         elif len(digits_only) == 3:
-            # If only 3 digits, assume 0.XXX
             return f"0.{digits_only}"
         else:
             # Can't fix, return cleaned version
@@ -312,10 +298,8 @@ def create_model(num_chars=11, hidden_size=256, num_lstm_layers=2, device='cpu')
         num_lstm_layers=num_lstm_layers
     )
     
-    # Move to device
     model = model.to(device)
     
-    # Count parameters
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     
@@ -327,7 +311,6 @@ def create_model(num_chars=11, hidden_size=256, num_lstm_layers=2, device='cpu')
     return model
 
 
-# for testing: 
 if __name__ == "__main__":
     print("="*60)
     print("TESTING MODEL ARCHITECTURE")

@@ -11,7 +11,7 @@ pip install PyQt5 opencv-python numpy
 
 ### Option 1: Startup Dialog (Recommended)
 ```bash
-cd "Labelling workflow"
+cd labelling_workflow
 python main.py
 ```
 
