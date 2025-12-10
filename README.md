@@ -165,13 +165,13 @@ Output format: `"X.XXX"` (e.g., "7.535", "12.450")
 ## Labeling Tools
 
 ### Labelling Workflow (Recommended)
-Batch labeling tool with smart frame sampling, zoom/pan, and keyboard shortcuts.
+Batch labeling tool with smart frame sampling, zoom/pan, and keyboard shortcuts. Use if you want to label frames for use in training a model.
 ```bash
 cd labelling_workflow && python main.py
 ```
 
 ### Manual Workflow
-Video editing tool with crop, trim, brightness/contrast adjustments.
+Video editing tool with crop, trim, brightness/contrast adjustments. Use if you want to manually label frames and save edits made to videos.
 ```bash
 cd manual_workflow && python main.py
 ```
