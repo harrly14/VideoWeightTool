@@ -250,14 +250,14 @@ class BatchManager:
                 processed_count += 1
                 
                 labelled_count = len(frame_data)
-                print(f"✓ Completed: {filename} ({labelled_count} labels)")
+                print(f"Completed: {filename} ({labelled_count} labels)")
                 
                 if result_action == VideoCompleteDialog.EXIT_BATCH:
                     print("User exited batch")
                     break
                 
             except Exception as e:
-                print(f"✗ Error processing {filename}: {e}")
+                print(f"Error processing {filename}: {e}")
                 QMessageBox.warning(
                     None,
                     "Error",

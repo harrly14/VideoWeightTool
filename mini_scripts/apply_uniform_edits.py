@@ -94,7 +94,7 @@ def process_video_with_params(input_path, params: VideoParams, out_folder):
                 current_time = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
                 pct = int((current_time / duration) * 100)
                 pct = min(pct, 99)
-                bar = "█" * (pct // 5) + "░" * (20 - pct // 5)
+                bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
                 update_progress(base_name, f"[{base_name[:30]}] [{bar}] {pct:3}%")
         proc.wait()
         if proc.returncode != 0:
@@ -177,7 +177,7 @@ def cli_main():
     for i, infile in enumerate(video_files):
         base_name = os.path.splitext(os.path.basename(infile))[0]
         video_lines[base_name] = i
-        print(f"[{base_name[:30]}] [{'░' * 20}]   0%")
+        print(f"[{base_name[:30]}] [{'-' * 20}]   0%")
 
     # Process in parallel (adjust max_workers to your CPU cores)
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:

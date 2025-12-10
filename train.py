@@ -403,16 +403,16 @@ def train_model(
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             torch.save(checkpoint, save_path / 'best_model.pth')
-            print(f"\n✓ Saved new best model (val_loss: {val_loss:.4f})")
+            print(f"\nSaved new best model (val_loss: {val_loss:.4f})")
         
         if seq_acc > best_seq_accuracy:
             best_seq_accuracy = seq_acc
             torch.save(checkpoint, save_path / 'best_accuracy_model.pth')
-            print(f"✓ Saved best accuracy model (seq_acc: {seq_acc:.2f}%)")
+            print(f"Saved best accuracy model (seq_acc: {seq_acc:.2f}%)")
         
         if (epoch + 1) % 10 == 0:
             torch.save(checkpoint, save_path / f'checkpoint_epoch_{epoch+1}.pth')
-            print(f"✓ Saved checkpoint at epoch {epoch+1}")
+            print(f"Saved checkpoint at epoch {epoch+1}")
     
     with open(save_path / 'training_history.json', 'w') as f:
         json.dump(history, f, indent=2)

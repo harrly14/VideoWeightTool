@@ -100,39 +100,39 @@ class ScaleOCRDataset(Dataset):
 
         if not missing_files and not corrupt_files and not invalid_weights:
             if self.verbose:
-                print("✓ All samples validated successfully!")
-                print(f"✓ All {len(self.labels_df)} images can be loaded")
-                print(f"✓ All weights are valid")
+                print("All samples validated successfully!")
+                print(f"All {len(self.labels_df)} images can be loaded")
+                print(f"All weights are valid")
         else:
             if missing_files and self.verbose:
-                print(f"\n✗ Found {len(missing_files)} missing image files:")
+                print(f"\nError: Found {len(missing_files)} missing image files:")
                 for idx, filename in missing_files[:10]:
                     print(f"    Row {idx}: {filename}")
                 if len(missing_files) > 10:
                     print(f"    ... and {len(missing_files) - 10} more")
             
             if corrupt_files and self.verbose:
-                print(f"\n✗ Found {len(corrupt_files)} corrupt/unreadable images:")
+                print(f"\nError: Found {len(corrupt_files)} corrupt/unreadable images:")
                 for idx, filename in corrupt_files[:10]:
                     print(f"    Row {idx}: {filename}")
                 if len(corrupt_files) > 10:
                     print(f"    ... and {len(corrupt_files) - 10} more")
             
             if invalid_weights and self.verbose:
-                print(f"\n✗ Found {len(invalid_weights)} invalid weights:")
+                print(f"\nError: Found {len(invalid_weights)} invalid weights:")
                 for idx, filename, weight in invalid_weights[:10]:
                     print(f"    Row {idx}: {filename} -> weight={weight}")
                 if len(invalid_weights) > 10:
                     print(f"    ... and {len(invalid_weights) - 10} more")
             
             if self.verbose:
-                print(f"\n⚠ Removing {len(missing_files) + len(corrupt_files) + len(invalid_weights)} problematic rows...")
+                print(f"\nWarning: Removing {len(missing_files) + len(corrupt_files) + len(invalid_weights)} problematic rows...")
             bad_indices = set([idx for idx, _ in missing_files] + 
                             [idx for idx, _ in corrupt_files] + 
                             [idx for idx, _, _ in invalid_weights])
             
             self.labels_df = self.labels_df.drop(index=list(bad_indices)).reset_index(drop=True)
-            if self.verbose: print(f"✓ Dataset now has {len(self.labels_df)} valid samples")
+            if self.verbose: print(f"Dataset now has {len(self.labels_df)} valid samples")
 
         if self.verbose: print("="*60 + "\n")
 

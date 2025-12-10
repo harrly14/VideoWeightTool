@@ -100,18 +100,18 @@ def load_model(model_path, device):
                     break
             fixed_state[new_k] = v
         state_to_load = fixed_state
-        print("  ✓ Stripped wrapper prefix from state_dict keys")
+        print("  Stripped wrapper prefix from state_dict keys")
     else:
         state_to_load = raw_state
 
     try:
         model.load_state_dict(state_to_load)
-        print("  ✓ Model loaded successfully (strict=True)")
+        print("  Model loaded successfully (strict=True)")
     except RuntimeError as e:
-        print(f"  ⚠ load_state_dict strict=True failed: {e}")
+        print(f"  Warning: load_state_dict strict=True failed: {e}")
         print("    Attempting load with strict=False (will ignore unmatched keys)...")
         model.load_state_dict(state_to_load, strict=False)
-        print("  ✓ Model loaded with strict=False (check for missing/unexpected keys)")
+        print("  Model loaded with strict=False (check for missing/unexpected keys)")
 
     model.eval()
     return model
@@ -133,7 +133,7 @@ def save_checkpoint(checkpoint_path, results, frame_num):
     }
     with open(checkpoint_path, 'w') as f:
         json.dump(checkpoint_data, f)
-    print(f"  💾 Checkpoint saved at frame {frame_num}")
+    print(f"  Checkpoint saved at frame {frame_num}")
 
 def load_checkpoint(checkpoint_path):
     """Load processing checkpoint if exists"""
@@ -141,11 +141,11 @@ def load_checkpoint(checkpoint_path):
         try:
             with open(checkpoint_path, 'r') as f:
                 data = json.load(f)
-            print(f"  ✓ Found checkpoint from {data.get('timestamp', 'unknown time')}")
-            print(f"  ✓ Resuming from frame {data['last_frame']}")
+            print(f"  Found checkpoint from {data.get('timestamp', 'unknown time')}")
+            print(f"  Resuming from frame {data['last_frame']}")
             return data['results'], data['last_frame']
         except Exception as e:
-            print(f"  ⚠ Warning: Could not load checkpoint: {e}")
+            print(f"  Warning: Could not load checkpoint: {e}")
             return [], 0
     return [], 0
 
@@ -153,7 +153,7 @@ def cleanup_checkpoint(checkpoint_path):
     """Remove checkpoint file after successful completion"""
     if os.path.exists(checkpoint_path):
         os.remove(checkpoint_path)
-        print("  ✓ Checkpoint file cleaned up")
+        print("  Checkpoint file cleaned up")
 
 # ============================================================
 # VIDEO PROCESSING
@@ -448,13 +448,13 @@ def load_ground_truth(gt_path):
     if gt_path is None:
         return None
     if not os.path.exists(gt_path):
-        print(f"  ⚠ Ground-truth file not found: {gt_path}")
+        print(f"  Warning: Ground-truth file not found: {gt_path}")
         return None
 
     try:
         df = pd.read_csv(gt_path)
     except Exception as e:
-        print(f"  ⚠ Could not read ground-truth CSV: {e}")
+        print(f"  Warning: Could not read ground-truth CSV: {e}")
         return None
 
     df_cols = {c.lower(): c for c in df.columns}
@@ -476,7 +476,7 @@ def load_ground_truth(gt_path):
             break
 
     if weight_col is None:
-        print('  ⚠ Ground-truth CSV missing weight column (expecting actual_weight/actual/weight)')
+        print('  Warning: Ground-truth CSV missing weight column (expecting actual_weight/actual/weight)')
         return None
 
     return {
@@ -526,7 +526,7 @@ def save_results_csv(results, output_path, metadata):
     df = df[cols]
     
     df.to_csv(output_path, index=False)
-    print(f"\n✓ Results saved to: {output_path}")
+    print(f"\nResults saved to: {output_path}")
     
     print("\n" + "="*60)
     print("SUMMARY STATISTICS")
@@ -561,16 +561,16 @@ def create_annotated_video(video_path, results, output_path, roi_coords=None):
             fourcc = cv2.VideoWriter_fourcc(*codec) # type: ignore
             out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
             if out.isOpened():
-                print(f"  ✓ Using {name} codec")
+                print(f"  Using {name} codec")
                 break
             else:
                 out = None
         except Exception as e:
-            print(f"  ⚠ {name} codec failed: {e}")
+            print(f"  Warning: {name} codec failed: {e}")
             out = None
     
     if out is None or not out.isOpened():
-        print("  ✗ Error: Could not initialize video writer with any codec")
+        print("  Error: Could not initialize video writer with any codec")
         cap.release()
         return
     
@@ -614,7 +614,7 @@ def create_annotated_video(video_path, results, output_path, roi_coords=None):
         
     cap.release()
     out.release()
-    print(f"✓ Annotated video saved to: {output_path}")
+    print(f"Annotated video saved to: {output_path}")
 
 # ============================================================
 # MAIN WORKFLOW
@@ -629,19 +629,19 @@ def main():
     print("="*60)
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"\n📱 Device: {device}")
+    print(f"\nDevice: {device}")
     if torch.cuda.is_available():
         print(f"   GPU: {torch.cuda.get_device_name(0)}")
-    print(f"⚙️  Batch size: {args.batch_size}")
-    print(f"💾 Checkpoint interval: {args.checkpoint_every} frames" if args.checkpoint_every > 0 else "💾 Checkpoints: disabled")
+    print(f"Batch size: {args.batch_size}")
+    print(f"Checkpoint interval: {args.checkpoint_every} frames" if args.checkpoint_every > 0 else "Checkpoints: disabled")
     
     try:
         model = load_model(args.model, device)
     except Exception as e:
-        print(f"\n✗ Error loading model: {e}")
+        print(f"\nError loading model: {e}")
         return 1
     
-    print(f"\n📹 Loading video: {args.video}")
+    print(f"\nLoading video: {args.video}")
     try:
         metadata = get_video_metadata(args.video)
         print(f"   Resolution: {metadata['width']}x{metadata['height']}")
@@ -649,7 +649,7 @@ def main():
         print(f"   Total frames: {metadata['frame_count']}")
         print(f"   Duration: {metadata['frame_count']/metadata['fps']:.1f} seconds ({metadata['frame_count']/metadata['fps']/60:.1f} minutes)")
     except Exception as e:
-        print(f"\n✗ Error loading video: {e}")
+        print(f"\nError loading video: {e}")
         return 1
 
     if not args.conservative and args.ground_truth is None:
@@ -666,12 +666,12 @@ def main():
             resume=args.resume
         )
     except KeyboardInterrupt:
-        print("\n\n⚠ Processing interrupted by user (Ctrl+C)")
-        print("💡 Use --resume flag to continue from last checkpoint.")
+        print("\n\nWarning: Processing interrupted by user (Ctrl+C)")
+        print("Tip: Use --resume flag to continue from last checkpoint.")
         return 1
     except Exception as e:
-        print(f"\n✗ Error during processing: {e}")
-        print("💡 Checkpoint saved. Use --resume flag to continue.")
+        print(f"\nError during processing: {e}")
+        print("Tip: Checkpoint saved. Use --resume flag to continue.")
         import traceback
         traceback.print_exc()
         return 1
@@ -845,14 +845,14 @@ def main():
     
     if args.save_video:
         video_output = os.path.splitext(args.video)[0] + '_annotated.mp4'
-        print(f"\n🎬 Creating annotated video: {video_output}")
+        print(f"\nCreating annotated video: {video_output}")
         create_annotated_video(args.video, results, video_output, args.roi)
     
     if checkpoint_path:
         cleanup_checkpoint(checkpoint_path)
     
     print("\n" + "="*60)
-    print("✓ PROCESSING COMPLETE!")
+    print("PROCESSING COMPLETE!")
     print("="*60)
     return 0
 

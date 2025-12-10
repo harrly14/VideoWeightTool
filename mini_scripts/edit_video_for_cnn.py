@@ -581,11 +581,11 @@ class CNNEditWindow(QWidget):
         shortcuts_layout.setSpacing(2)
         shortcuts_layout.setContentsMargins(6, 6, 6, 6)
         shortcuts_text = QLabel(
-            "← → Frame nav\n"
-            "Ctrl+← → Jump 10\n"
+            "Left/Right arrow: Frame nav\n"
+            "Ctrl+Left/Right arrow: Jump 10\n"
             "Wheel: Zoom\n"
             "Drag: Pan (when zoomed)\n"
-            "↑↓ Shift+←→ Pan (when zoomed)"
+            "Up/Down arrow, Shift+Left/Right arrow: Pan (when zoomed)"
         )
         shortcuts_text.setAlignment(Qt.AlignmentFlag.AlignLeft)
         shortcuts_text.setStyleSheet("font-size: 10px;")
