@@ -19,13 +19,6 @@ Utility scripts used during development. These are ad-hoc tools and may require 
 | `vid_to_test_images.py` | Extracts all frames from a video via Qt dialog | Working |
 | `videos_to_frames.py` | Batch extracts frames from videos matching a naming pattern | Working |
 
-## Deprecated/Broken
-
-| Script | Issue |
-|--------|-------|
-| `make_labels_file.py` | Incomplete stub with syntax errors |
-| `remake_label_csvs.py` | Empty file |
-
 ## Usage
 
 Most scripts are standalone and can be run directly:
