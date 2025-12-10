@@ -19,13 +19,13 @@ This project provides:
 ## Installation
 
 1. Clone the repository:
-\`\`\`bash
+```bash
 git clone https://github.com/harrly14/VideoWeightTool
 cd VideoWeightTool
-\`\`\`
+```
 
 2. Create a virtual environment:
-\`\`\`bash
+```bash
 # Linux/macOS
 python -m venv .venv
 source .venv/bin/activate
@@ -33,21 +33,21 @@ source .venv/bin/activate
 # Windows
 python -m venv .venv
 .venv\Scripts\activate
-\`\`\`
+```
 
 3. Install dependencies:
-\`\`\`bash
+```bash
 pip install -r requirements.txt
-\`\`\`
+```
 
 4. Install ffmpeg:
-- **Linux**: \`sudo apt install ffmpeg\`
-- **macOS**: \`brew install ffmpeg\`
-- **Windows**: \`choco install ffmpeg\` or download from https://ffmpeg.org/
+- **Linux**: `sudo apt install ffmpeg`
+- **macOS**: `brew install ffmpeg`
+- **Windows**: `choco install ffmpeg` or download from https://ffmpeg.org/
 
 ## Project Structure
 
-\`\`\`
+```
 VideoWeightTool/
 ├── train.py                 # Model training script
 ├── model.py                 # CNN+LSTM+CTC architecture
@@ -75,7 +75,7 @@ VideoWeightTool/
 │   └── main.py
 │
 └── mini_scripts/            # Utility scripts (ad-hoc, not polished)
-\`\`\`
+```
 
 ## Workflow
 
@@ -83,62 +83,62 @@ VideoWeightTool/
 
 Use the labeling tool to create ground-truth labels:
 
-\`\`\`bash
+```bash
 cd labelling_workflow
 python main.py
-\`\`\`
+```
 
-See \`labelling_workflow/USAGE_GUIDE.md\` for detailed instructions.
+See `labelling_workflow/USAGE_GUIDE.md` for detailed instructions.
 
 ### 2. Extract Frames
 
 Extract cropped frames from labeled videos:
 
-\`\`\`bash
+```bash
 python training_scripts/extract_frames.py --video_dir /path/to/videos
-\`\`\`
+```
 
-This creates images in \`data/images/\`.
+This creates images in `data/images/`.
 
 ### 3. Split Dataset
 
 Split labels into train/validation/test sets:
 
-\`\`\`bash
+```bash
 python training_scripts/split_data.py
-\`\`\`
+```
 
-This creates CSV files in \`data/labels/\`.
+This creates CSV files in `data/labels/`.
 
 ### 4. Train Model
 
 Train the Scale OCR model:
 
-\`\`\`bash
+```bash
 python train.py
-\`\`\`
+```
 
-Key training parameters (edit in \`train.py\`):
-- \`batch_size\`: 32 (reduce to 8-16 if GPU memory limited)
-- \`num_epochs\`: 400
-- \`learning_rate\`: 0.00025
-- \`image_size\`: (256, 64)
+Key training parameters (edit in `train.py`):
+- `batch_size`: 32 (reduce to 8-16 if GPU memory limited)
+- `num_epochs`: 400
+- `learning_rate`: 0.00025
+- `image_size`: (256, 64)
 
-Models are saved to \`models/\`:
-- \`best_model.pth\` - Lowest validation loss
-- \`best_accuracy_model.pth\` - Highest sequence accuracy
-- \`latest_model.pth\` - Most recent checkpoint
+Models are saved to `models/`:
+- `best_model.pth` - Lowest validation loss
+- `best_accuracy_model.pth` - Highest sequence accuracy
+- `latest_model.pth` - Most recent checkpoint
 
 ### 5. Run Inference
 
 Process a video to extract weight readings:
 
-\`\`\`bash
+```bash
 python process_video.py --video path/to/video.mp4 --output weights.csv
-\`\`\`
+```
 
 Options:
-\`\`\`bash
+```bash
 # Specify ROI (region of interest)
 python process_video.py --video video.mp4 --roi 100,50,400,150
 
@@ -150,7 +150,7 @@ python process_video.py --video video.mp4 --ground-truth gt.csv
 
 # Save annotated video
 python process_video.py --video video.mp4 --save-video
-\`\`\`
+```
 
 ## Model Architecture
 
@@ -160,31 +160,31 @@ The model uses a CRNN (Convolutional Recurrent Neural Network) architecture:
 2. **Bidirectional LSTM**: 2-layer LSTM reads features as a sequence
 3. **CTC Decoder**: Connectionist Temporal Classification decodes the output to weight strings
 
-Output format: \`"X.XXX"\` (e.g., "7.535", "12.450")
+Output format: `"X.XXX"` (e.g., "7.535", "12.450")
 
 ## Labeling Tools
 
 ### Labelling Workflow (Recommended)
 Batch labeling tool with smart frame sampling, zoom/pan, and keyboard shortcuts.
-\`\`\`bash
+```bash
 cd labelling_workflow && python main.py
-\`\`\`
+```
 
 ### Manual Workflow
 Video editing tool with crop, trim, brightness/contrast adjustments.
-\`\`\`bash
+```bash
 cd manual_workflow && python main.py
-\`\`\`
+```
 
 ## Troubleshooting
 
 ### NumPy installation fails
-\`\`\`bash
+```bash
 pip install --only-binary=numpy -r requirements.txt
-\`\`\`
+```
 
 ### CUDA out of memory
-Reduce \`batch_size\` in \`train.py\` (try 8 or 16).
+Reduce `batch_size` in `train.py` (try 8 or 16).
 
 ### Python 3.13+
 Some packages may not have pre-built wheels. Use Python 3.11 or 3.12 instead.
