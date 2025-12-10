@@ -30,7 +30,7 @@ This skips the dialog and goes straight to processing.
 ## Workflow
 
 ### 1. Video Selection
-The tool auto-discovers all videos (.mp4, .mov, .avi, .mkv) in your selected folder. It will skip any videos already in your output CSV.
+The tool auto-discovers all videos (.mp4, .mov, .avi, .mkv) in your selected folder. It will skip any videos already in your output CSV. Therefore, it is recommended that you prepare a local folder with all the .mp4 video files you want to process. Avoid using network share folders as the latency can cause problems with OpenCV.
 
 ### 2. Valid Frame Range (First Step)
 Before labelling, select the valid frame range:
@@ -173,16 +173,3 @@ If the program crashes or you close it:
 - Make sure you click Submit or press Enter after typing
 - Check CSV file has write permission
 - Look for `.backup_*.csv` files if you think data was lost
-
-## Tips for Accurate Labelling
-
-1. **Choose good valid range:** Exclude obviously bad/garbage frames
-2. **Use sliders:** Adjust brightness/saturation to see clearly
-3. **Use zoom:** Look at details if needed
-4. **Be consistent:** Use same scale/criteria across all videos
-5. **Take breaks:** Labelling is tedious; don't rush through
-6. **Review:** Use the back/review option to double-check
-
----
-
-**Need Help?** See `README_BATCH_IMPLEMENTATION.md` for detailed documentation.

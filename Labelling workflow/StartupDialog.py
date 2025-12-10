@@ -1,7 +1,6 @@
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QFileDialog, QMessageBox
 from PyQt5.QtCore import Qt
 
-
 class StartupDialog(QDialog):
     """Startup configuration dialog for batch labelling."""
     
@@ -11,7 +10,7 @@ class StartupDialog(QDialog):
         self.setMinimumWidth(500)
         self.resize(600, 300)
         
-        self.n_value = None
+        self.num_frames_per_video = None
         self.video_dir = None
         self.csv_path = None
         
@@ -21,30 +20,26 @@ class StartupDialog(QDialog):
         """Initialize UI components."""
         layout = QVBoxLayout()
         
-        # Title and description
         title = QLabel("Video Batch Labelling Configuration")
         title.setStyleSheet("font-size: 14px; font-weight: bold;")
         layout.addWidget(title)
         
         description = QLabel(
             "Configure the number of labels per video and select source/output locations.\n\n"
-            "n: Number of frames to label per video.\n"
             "Frames will be evenly distributed throughout the valid frame range."
         )
         description.setWordWrap(True)
         layout.addWidget(description)
         
-        # n input
-        n_layout = QHBoxLayout()
-        n_label = QLabel("Labels per video (n):")
-        self.n_input = QLineEdit()
-        self.n_input.setPlaceholderText("e.g., 50")
-        self.n_input.setText("50")
-        n_layout.addWidget(n_label)
-        n_layout.addWidget(self.n_input)
-        layout.addLayout(n_layout)
+        num_frames_layout = QHBoxLayout()
+        num_frames_label = QLabel("Labels per video:")
+        self.num_frames_input = QLineEdit()
+        self.num_frames_input.setPlaceholderText("e.g., 50")
+        self.num_frames_input.setText("50")
+        num_frames_layout.addWidget(num_frames_label)
+        num_frames_layout.addWidget(self.num_frames_input)
+        layout.addLayout(num_frames_layout)
         
-        # Video directory picker
         video_dir_layout = QHBoxLayout()
         video_dir_label = QLabel("Video folder:")
         self.video_dir_display = QLineEdit()
@@ -56,7 +51,6 @@ class StartupDialog(QDialog):
         video_dir_layout.addWidget(self.video_dir_button)
         layout.addLayout(video_dir_layout)
         
-        # CSV file picker
         csv_layout = QHBoxLayout()
         csv_label = QLabel("Output CSV:")
         self.csv_display = QLineEdit()
@@ -68,7 +62,6 @@ class StartupDialog(QDialog):
         csv_layout.addWidget(self.csv_button)
         layout.addLayout(csv_layout)
         
-        # Buttons
         button_layout = QHBoxLayout()
         self.ok_button = QPushButton("Start")
         self.cancel_button = QPushButton("Cancel")
@@ -103,26 +96,26 @@ class StartupDialog(QDialog):
             options=QFileDialog.DontConfirmOverwrite  # Allow selecting existing file
         )
         if csv_path:
+            # Auto-append .csv if missing
+            if not csv_path.lower().endswith('.csv'):
+                csv_path += '.csv'
             self.csv_path = csv_path
             self.csv_display.setText(csv_path)
     
     def validate_and_accept(self):
         """Validate inputs and accept dialog."""
-        # Validate n
         try:
-            self.n_value = int(self.n_input.text().strip())
-            if self.n_value <= 0:
-                raise ValueError("n must be positive")
+            self.num_frames_per_video = int(self.num_frames_input.text().strip())
+            if self.num_frames_per_video <= 0:
+                raise ValueError("must be positive")
         except ValueError as e:
-            QMessageBox.warning(self, "Invalid input", f"Invalid value for n: {e}")
+            QMessageBox.warning(self, "Invalid input", f"Invalid value for labels per video: {e}")
             return
         
-        # Validate video directory
         if not self.video_dir:
             QMessageBox.warning(self, "Missing selection", "Please select a video folder")
             return
         
-        # Validate CSV path
         if not self.csv_path:
             QMessageBox.warning(self, "Missing selection", "Please select or specify a CSV file path")
             return
@@ -131,4 +124,4 @@ class StartupDialog(QDialog):
     
     def get_config(self) -> tuple[int | None, str | None, str | None]:
         """Return configuration values."""
-        return self.n_value, self.video_dir, self.csv_path
+        return self.num_frames_per_video, self.video_dir, self.csv_path

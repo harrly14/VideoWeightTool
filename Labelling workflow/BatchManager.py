@@ -4,7 +4,8 @@ import csv
 import sys
 from pathlib import Path
 from typing import Optional
-from Window import EditWindow
+from RangeSelectionDialog import RangeSelectionDialog
+from LabellingWindow import LabellingWindow, VideoCompleteDialog
 from FrameSampler import FrameSampler
 from PyQt5.QtWidgets import QApplication, QMessageBox
 
@@ -21,7 +22,7 @@ class BatchManager:
         Args:
             video_dir: Directory containing video files
             csv_path: Path to output CSV file
-            target_labels: Target number of labels per video (n)
+            target_labels: Target number of labels per video
         """
         self.video_dir = video_dir
         self.csv_path = csv_path
@@ -40,7 +41,6 @@ class BatchManager:
                 # Skip header if present (check first row)
                 first_row = next(reader, None)
                 if first_row and first_row[0].lower() in ['filename', 'frame_number']:
-                    # This is a header row, skip it
                     for row in reader:
                         if row:
                             self.processed_videos.add(row[0])
@@ -94,19 +94,60 @@ class BatchManager:
         
         return queue
     
-    def create_label_window(self, video_path: str) -> tuple[Optional[dict], Optional[dict]]:
+    def validate_all_videos(self, video_paths: list[str]) -> tuple[list[str], list[tuple[str, str]]]:
         """
-        Launch labelling window for a video.
+        Pre-validate all videos can be opened.
+        
+        Args:
+            video_paths: List of video file paths to validate
+        
+        Returns:
+            tuple: (valid_paths, errors) where errors is list of (filename, error_msg)
+        """
+        valid = []
+        errors = []
+        
+        for path in video_paths:
+            filename = os.path.basename(path)
+            video = cv2.VideoCapture(path)
+            
+            if video.isOpened():
+                # check we can read at least one frame
+                success, _ = video.read()
+                video.release()
+                
+                if success:
+                    valid.append(path)
+                else:
+                    errors.append((filename, "Cannot read frames from video"))
+            else:
+                # Try to get more diagnostic info
+                if not os.path.exists(path):
+                    errors.append((filename, "File does not exist"))
+                else:
+                    file_size = os.path.getsize(path)
+                    if file_size == 0:
+                        errors.append((filename, "File is empty"))
+                    else:
+                        errors.append((filename, f"Cannot open video (size: {file_size} bytes)"))
+        
+        return valid, errors
+    
+    def process_single_video(self, video_path: str, video_index: int, total_videos: int) -> tuple[Optional[dict], int, Optional[int], Optional[int]]:
+        """
+        Process a single video through staged workflow.
         
         Args:
             video_path: Path to video file
+            video_index: Current video index (1-based)
+            total_videos: Total videos in batch
         
         Returns:
-            tuple: (frame_data dict, video_params dict) or (None, None) if cancelled
-        
-        Raises:
-            ValueError: If video cannot be opened
+            tuple: (frame_data dict or None, result_action, start_frame, end_frame)
+                result_action: VideoCompleteDialog.EXIT_BATCH, REVIEW_LABELS, or NEXT_VIDEO
         """
+        filename = os.path.basename(video_path)
+        
         video = cv2.VideoCapture(video_path)
         if not video.isOpened():
             raise ValueError(f"Cannot open video: {video_path}")
@@ -116,25 +157,49 @@ class BatchManager:
             if app is None:
                 app = QApplication(sys.argv)
             
-            window = EditWindow(video, video_path, self.target_labels)
-            window.show()
-            app.exec_()
+            # Stage 1: Range Selection Dialog
+            range_dialog = RangeSelectionDialog(video, filename)
+            if range_dialog.exec_() != RangeSelectionDialog.Accepted:
+                # User cancelled range selection
+                return None, VideoCompleteDialog.EXIT_BATCH, None, None
             
-            # Get results from window
-            frame_data = window.frame_data
-            return frame_data, None
+            start_frame, end_frame = range_dialog.get_range()
+            
+            # Stage 2: Labelling Window
+            while True:
+                # Reset video position
+                video.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                
+                labelling_window = LabellingWindow(
+                    video, filename, start_frame, end_frame,
+                    self.target_labels, video_index, total_videos
+                )
+                labelling_window.show()
+                app.exec_()
+                
+                frame_data = labelling_window.get_frame_data()
+                result_action = labelling_window.get_result_action()
+                
+                if result_action == VideoCompleteDialog.REVIEW_LABELS:
+                    # User wants to review - loop back to labelling window
+                    continue
+                else:
+                    # EXIT_BATCH or NEXT_VIDEO
+                    return frame_data, result_action, start_frame, end_frame
+        
         finally:
             video.release()
     
-    def write_results(self, filename: str, frame_data: dict):
+    def write_results(self, filename: str, frame_data: dict, start_frame: int | None = None, end_frame: int | None = None):
         """
         Append labelled frame data to CSV.
         
         Args:
             filename: Video filename (for CSV)
             frame_data: Dict of {frame_num: weight}
+            start_frame: Valid range start frame
+            end_frame: Valid range end frame
         """
-        # Determine if we need to write header
         write_header = not self.csv_exists
         
         try:
@@ -143,12 +208,11 @@ class BatchManager:
                 writer = csv.writer(f)
                 
                 if write_header:
-                    writer.writerow(['filename', 'frame_number', 'weight'])
+                    writer.writerow(['filename', 'frame_number', 'weight', 'start_frame', 'end_frame'])
                 
-                # Write all labelled frames (non-zero weights)
                 for frame_num, weight in sorted(frame_data.items()):
-                    if weight != '0':  # Only write non-zero weights
-                        writer.writerow([filename, frame_num, weight])
+                    if weight != '0':
+                        writer.writerow([filename, frame_num, weight, start_frame, end_frame])
             
             self.csv_exists = True
         except Exception as e:
@@ -156,7 +220,7 @@ class BatchManager:
     
     def process_batch(self, video_queue: list[str]) -> int:
         """
-        Process all videos in queue with per-video summaries.
+        Process all videos in queue using staged workflow.
         
         Args:
             video_queue: List of video file paths to process
@@ -173,39 +237,24 @@ class BatchManager:
             try:
                 print(f"[{idx}/{total}] Processing: {filename}")
                 
-                # Open video and launch labelling window
-                frame_data, _ = self.create_label_window(video_path)
+                frame_data, result_action, start_frame, end_frame = self.process_single_video(video_path, idx, total)
                 
-                if frame_data is None:
-                    print(f"Labelling cancelled for {filename}")
+                if frame_data is None or not frame_data:
+                    print(f"No labels for {filename}")
+                    if result_action == VideoCompleteDialog.EXIT_BATCH:
+                        print("User exited batch")
+                        break
                     continue
                 
-                # Count labelled frames
-                labelled_count = sum(1 for w in frame_data.values() if w != '0')
-                
-                # Show summary
-                summary_msg = f"Video {idx}/{total}: {filename}\n\nLabelled {labelled_count} frames."
-                
-                # Ask user to continue or review
-                reply = QMessageBox.question(
-                    None,
-                    "Video Complete",
-                    summary_msg + "\n\nContinue to next video?",
-                    QMessageBox.Yes | QMessageBox.No,
-                    QMessageBox.Yes
-                )
-                
-                if reply == QMessageBox.No:
-                    # User wants to review/edit current video
-                    # Re-open window for this video
-                    frame_data, _ = self.create_label_window(video_path)
-                    if frame_data is None:
-                        continue
-                
-                # Write results
-                self.write_results(filename, frame_data)
+                self.write_results(filename, frame_data, start_frame, end_frame)
                 processed_count += 1
-                print(f"✓ Completed: {filename}")
+                
+                labelled_count = len(frame_data)
+                print(f"✓ Completed: {filename} ({labelled_count} labels)")
+                
+                if result_action == VideoCompleteDialog.EXIT_BATCH:
+                    print("User exited batch")
+                    break
                 
             except Exception as e:
                 print(f"✗ Error processing {filename}: {e}")

@@ -2,7 +2,6 @@ from PyQt5.QtWidgets import QLabel
 from PyQt5.QtGui import QPixmap, QImage
 from PyQt5.QtCore import Qt, QPoint
 
-
 class ZoomPanLabel(QLabel):
     """Label widget supporting zoom and pan for frame visibility without crop functionality."""
     
@@ -15,7 +14,9 @@ class ZoomPanLabel(QLabel):
         self.pan_offset_x = 0
         self.pan_offset_y = 0
         
-        # Pan drag state
+        # Store the original full-resolution pixmap
+        self.original_pixmap = None
+        
         self.pan_dragging = False
         self.pan_drag_start = None
         self.pan_drag_start_offset = None
@@ -26,6 +27,53 @@ class ZoomPanLabel(QLabel):
         """Set original image dimensions."""
         self.original_w = w
         self.original_h = h
+    
+    def setFullPixmap(self, pixmap: QPixmap) -> None:
+        """
+        Set the full-resolution pixmap and apply zoom/pan.
+        Use this instead of setPixmap() to enable zoom/pan functionality.
+        """
+        self.original_pixmap = pixmap
+        self.original_w = pixmap.width()
+        self.original_h = pixmap.height()
+        self._apply_zoom_pan()
+    
+    def _apply_zoom_pan(self) -> None:
+        """Apply current zoom and pan settings to display the pixmap."""
+        if self.original_pixmap is None:
+            return
+        
+        if self.zoom_level <= 1.0:
+            scaled = self.original_pixmap.scaled(
+                self.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            super().setPixmap(scaled)
+            return
+        
+        img_w = self.original_pixmap.width()
+        img_h = self.original_pixmap.height()
+        
+        visible_w = int(img_w / self.zoom_level)
+        visible_h = int(img_h / self.zoom_level)
+        
+        max_pan_x = max(0, img_w - visible_w)
+        max_pan_y = max(0, img_h - visible_h)
+        self.pan_offset_x = max(0, min(self.pan_offset_x, max_pan_x))
+        self.pan_offset_y = max(0, min(self.pan_offset_y, max_pan_y))
+        
+        x = int(self.pan_offset_x)
+        y = int(self.pan_offset_y)
+        
+        cropped = self.original_pixmap.copy(x, y, visible_w, visible_h)
+        
+        scaled = cropped.scaled(
+            self.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation
+        )
+        super().setPixmap(scaled)
     
     def set_zoom(self, zoom_level: float, pan_x: float | None = None, pan_y: float | None = None) -> None:
         """Set zoom level and optional pan offset."""
@@ -41,7 +89,7 @@ class ZoomPanLabel(QLabel):
             max_pan_y = max(0, self.original_h - self.original_h / self.zoom_level)
             self.pan_offset_y = max(0, min(pan_y, max_pan_y))
         
-        self.update()
+        self._apply_zoom_pan()
     
     def _get_display_params(self) -> tuple[float, int, int, float, float] | None:
         """Calculate display scaling and offset parameters."""
@@ -113,10 +161,9 @@ class ZoomPanLabel(QLabel):
                 self.pan_offset_x = max(0, min(new_pan_x, max_pan_x))
                 self.pan_offset_y = max(0, min(new_pan_y, max_pan_y))
                 
-                self.update()
+                self._apply_zoom_pan()
             return
         
-        # Update cursor when zoomed
         if self.zoom_level > 1.0:
             self.setCursor(Qt.CursorShape.OpenHandCursor)
         else:
@@ -139,18 +186,15 @@ class ZoomPanLabel(QLabel):
         if not self.original_w or not self.original_h:
             return
         
-        # Scroll up increases zoom, scroll down decreases
-        zoom_factor = 1.1 if event.angleDelta().y() > 0 else 0.9
+        zoom_factor = 1.05 if event.angleDelta().y() > 0 else 0.95
         new_zoom = self.zoom_level * zoom_factor
         
-        # Try to keep mouse position centered during zoom
         params = self._get_display_params()
         if params:
             scale, off_x, off_y, visible_w, visible_h = params
             mouse_img_x, mouse_img_y = self._label_to_image_pt(event.pos())
             
             if mouse_img_x is not None and mouse_img_y is not None:
-                # Calculate new pan offset to keep mouse position under cursor
                 new_visible_w = self.original_w / new_zoom
                 new_visible_h = self.original_h / new_zoom
                 
@@ -162,3 +206,15 @@ class ZoomPanLabel(QLabel):
                 self.set_zoom(new_zoom)
         
         event.accept()
+    
+    def resizeEvent(self, event):
+        """Handle resize to reapply zoom/pan."""
+        super().resizeEvent(event)
+        self._apply_zoom_pan()
+    
+    def reset_zoom(self):
+        """Reset zoom to 1.0 and pan to origin."""
+        self.zoom_level = 1.0
+        self.pan_offset_x = 0
+        self.pan_offset_y = 0
+        self._apply_zoom_pan()

@@ -1,6 +1,5 @@
 import math
 
-
 class FrameSampler:
     """Calculate target frames for labelling using dynamic touchstone sampling."""
     
@@ -12,7 +11,7 @@ class FrameSampler:
             total_frames: Total frames in video
             valid_start: Start frame of valid range (inclusive)
             valid_end: End frame of valid range (inclusive)
-            target_labels: Target number of labels (n)
+            target_labels: Target number of labels
         
         Raises:
             ValueError: If parameters are invalid
@@ -40,21 +39,19 @@ class FrameSampler:
                 - m: Calculated interval (every m-th frame)
                 - warning_flag: True if fewer labels than target (video too short)
         """
-        # Calculate interval: m = floor((valid_end - valid_start) / target_labels)
-        m = math.floor(self.valid_frame_count / self.target_labels)
+        interval_between_labels = math.floor(self.valid_frame_count / self.target_labels)
         
         warning = False
-        if m < 1:
-            # Video is shorter than target labels
+        if interval_between_labels < 1:
+            # Video is too short
             warning = True
-            m = 1  # Label every frame in valid range
+            interval_between_labels = 1
         
-        # Generate target frames starting from valid_start, every m frames
         target_frames = []
         current_frame = self.valid_start
         
         while current_frame <= self.valid_end and len(target_frames) < self.target_labels:
             target_frames.append(current_frame)
-            current_frame += m
+            current_frame += interval_between_labels
         
-        return target_frames, m, warning
+        return target_frames, interval_between_labels, warning
