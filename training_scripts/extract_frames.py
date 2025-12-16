@@ -6,7 +6,7 @@ import pandas as pd
 import argparse
 from pathlib import Path
 from PyQt5.QtWidgets import (QApplication, QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, 
-                             QGroupBox, QMessageBox, QAction, QProgressDialog)
+                             QGroupBox, QMessageBox, QAction, QProgressDialog, QFileDialog)
 from PyQt5.QtGui import QPixmap, QImage, QPainter, QPen, QColor
 from PyQt5.QtCore import Qt, QPoint, pyqtSignal
 
@@ -169,7 +169,7 @@ class CNNCropLabel(QLabel):
     def mouseMoveEvent(self, event):
         if not self.original_w: return
         
-        if self.pan_dragging and self.pan_drag_start:
+        if self.pan_dragging and self.pan_drag_start and self.pan_drag_start_offset:
             dx_screen = event.pos().x() - self.pan_drag_start.x()
             dy_screen = event.pos().y() - self.pan_drag_start.y()
             params = self._get_display_params()
@@ -187,22 +187,26 @@ class CNNCropLabel(QLabel):
                 self.pan_offset_y = max(0, min(new_pan_y, max_pan_y))
                 
                 parent = self.parent()
-                if parent and hasattr(parent, 'on_pan_drag'):
-                    parent.on_pan_drag(self.pan_offset_x, self.pan_offset_y)
+                if parent:
+                    on_pan_drag = getattr(parent, 'on_pan_drag', None)
+                    if on_pan_drag:
+                        on_pan_drag(self.pan_offset_x, self.pan_offset_y)
                 self.update()
             return
 
         if not self.crop_rect: return
         
         if not self.action: return
+        if not self.initial_crop_rect: return
         curr_ix, curr_iy = self._label_to_image_pt(event.pos())
-        if curr_ix is None: return
+        if curr_ix is None or curr_iy is None: return
         
         ix, iy, iw, ih = self.initial_crop_rect
         
         if self.action == 'move':
+            if not self.drag_start_pos: return
             start_ix, start_iy = self._label_to_image_pt(self.drag_start_pos)
-            if start_ix is None: return
+            if start_ix is None or start_iy is None: return
             dx = curr_ix - start_ix
             dy = curr_iy - start_iy
             nx = max(0, min(ix + dx, self.original_w - iw))
@@ -413,18 +417,55 @@ class ExtractionController:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--csv', default='data/all_data.csv', help='Path to labels CSV')
-    parser.add_argument('--video_dir', required=True, help='Directory containing video files')
-    parser.add_argument('--output_dir', default='data/images', help='Output directory for images')
+    parser.add_argument('--csv', '-c', default=None, help='Path to labels CSV (will prompt if not provided)')
+    parser.add_argument('--video_dir', '-v', default=None, help='Directory containing video files (will prompt if not provided)')
+    parser.add_argument('--output_dir', '-o', default=None, help='Output directory for images (will prompt if not provided)')
     args = parser.parse_args()
     
-    app = QApplication(sys.argv)
-    
-    if not os.path.exists(args.csv):
-        QMessageBox.critical(None, "Error", f"CSV file not found: {args.csv}")
-        return
-        
-    controller = ExtractionController(args.csv, args.video_dir, args.output_dir)
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    csv_path = args.csv
+    if not csv_path or not os.path.exists(csv_path):
+        if csv_path and not os.path.exists(csv_path):
+            QMessageBox.warning(None, "CSV not found", f"CSV file not found: {csv_path}\nPlease select a CSV file.")
+        csv_path, _ = QFileDialog.getOpenFileName(
+            None,
+            "Select labels CSV",
+            os.getcwd(),
+            "CSV Files (*.csv);;All Files (*)"
+        )
+        if not csv_path:
+            QMessageBox.critical(None, "Error", "No CSV selected. Exiting.")
+            return 1
+
+    video_dir = args.video_dir
+    if not video_dir or not os.path.isdir(video_dir):
+        if video_dir and not os.path.isdir(video_dir):
+            QMessageBox.warning(None, "Video dir not found", f"Video directory not found: {video_dir}\nPlease select a directory.")
+        video_dir = QFileDialog.getExistingDirectory(
+            None,
+            "Select video directory",
+            os.getcwd(),
+            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
+        )
+        if not video_dir:
+            QMessageBox.critical(None, "Error", "No video directory selected. Exiting.")
+            return 1
+
+    output_dir = args.output_dir or QFileDialog.getExistingDirectory(
+        None, "Select output directory for images", os.getcwd(),
+        QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
+    )
+    if not output_dir:
+        QMessageBox.critical(None, "Error", "No output directory selected. Exiting.")
+        return 1
+
+    # Final sanity checks
+    if not os.path.exists(csv_path):
+        QMessageBox.critical(None, "Error", f"CSV file not found: {csv_path}")
+        return 1
+
+    controller = ExtractionController(csv_path, video_dir, output_dir)
     controller.start()
     
     sys.exit(app.exec_())
