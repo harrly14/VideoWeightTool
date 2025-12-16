@@ -5,8 +5,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .env
-data/images/
-data/labels/
+data/
 models/
 outputs/
 .vscode/
