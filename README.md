@@ -118,13 +118,20 @@ Train the Scale OCR model:
 python train.py
 ```
 
-Key training parameters (edit in `train.py`):
-- `batch_size`: 32 (reduce to 8-16 if GPU memory limited)
-- `num_epochs`: 400
-- `learning_rate`: 0.00025
-- `image_size`: (256, 64)
+You can also configure training via command-line arguments:
 
-Models are saved to `models/`:
+```bash
+python train.py --batch-size 16 --epochs 100 --data-dir /path/to/data --save-dir /path/to/save/models
+```
+
+Key arguments:
+- `--batch-size`: Default 32 (reduce if memory limited)
+- `--epochs`: Default 400
+- `--data-dir`: Directory containing `images/` and `labels/` (default: `data`)
+- `--save-dir`: Directory to save checkpoints (default: `models`)
+- `--no-amp`: Disable mixed precision training (useful for debugging)
+
+Models are saved to `models/` (or your specified `--save-dir`):
 - `best_model.pth` - Lowest validation loss
 - `best_accuracy_model.pth` - Highest sequence accuracy
 - `latest_model.pth` - Most recent checkpoint
@@ -134,7 +141,7 @@ Models are saved to `models/`:
 Process a video to extract weight readings:
 
 ```bash
-python process_video.py --video path/to/video.mp4 --output weights.csv
+python training_scripts/process_video.py --video path/to/video.mp4 --output weights.csv
 ```
 
 Options:
