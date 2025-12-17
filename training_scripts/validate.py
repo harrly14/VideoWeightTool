@@ -24,6 +24,15 @@ def validate_model(model_path, test_csv, images_dir, batch_size=32, device='cuda
     
     state_dict = checkpoint['model_state_dict'] if 'model_state_dict' in checkpoint else checkpoint
     
+    # Fix for torch.compile adding '_orig_mod.' prefix
+    new_state_dict = {}
+    for k, v in state_dict.items():
+        if k.startswith('_orig_mod.'):
+            new_state_dict[k[10:]] = v
+        else:
+            new_state_dict[k] = v
+    state_dict = new_state_dict
+
     # CTCLabelEncoder has 12 classes (0-9, ., blank)
     encoder = CTCLabelEncoder()
     model = create_model(num_chars=len(encoder.char_to_idx), device=device)

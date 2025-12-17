@@ -20,6 +20,9 @@ Recommendation:
 """
 import argparse, cv2, torch, pandas as pd, numpy as np
 import os
+# Fix for GoPro/high-res videos with multiple streams
+os.environ["OPENCV_FFMPEG_READ_ATTEMPTS"] = str(2**18)
+
 import json
 from pathlib import Path
 from scipy.signal import medfilt
@@ -33,7 +36,7 @@ from dataset import get_transforms
 def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser()
-    parser.add_argument('--video', required=True, help='Path to video file')
+    parser.add_argument('--video', required=False, help='Path to video file')
     parser.add_argument('--output', default=None, help='Output CSV path')
     parser.add_argument('--model', default='models/best_model.pth', help='Model path')
     parser.add_argument('--roi', default=None, help='ROI as x,y,w,h (e.g., 100,50,400,150)')
@@ -284,7 +287,7 @@ def process_video_streaming_batched(video_path, model, transform, roi_coords, de
     if resume and checkpoint_path:
         results, start_frame = load_checkpoint(checkpoint_path)
         if start_frame > 0:
-            print(f"  ⏩ Skipping to frame {start_frame}/{total_frames}")
+            print(f"Skipping to frame {start_frame}/{total_frames}")
             cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
     
     frame_batch = []
@@ -624,6 +627,37 @@ def main():
     
     args = parse_args()
     
+    # If video not provided via CLI, open file dialog
+    if args.video is None:
+        try:
+            from PyQt5.QtWidgets import QApplication, QFileDialog
+            import sys
+            
+            print("No video argument provided. Opening file dialog...")
+            # Create QApplication instance (required for Qt widgets)
+            app = QApplication(sys.argv)
+            
+            file_path, _ = QFileDialog.getOpenFileName(
+                None,
+                "Select Video File",
+                "",
+                "Video Files (*.mp4 *.avi *.mov *.mkv *.webm);;All Files (*)"
+            )
+            
+            if file_path:
+                args.video = file_path
+                print(f"Selected: {args.video}")
+            else:
+                print("No file selected. Exiting.")
+                return 0
+                
+        except ImportError:
+            print("Error: PyQt5 not installed. Please provide --video argument.")
+            return 1
+        except Exception as e:
+            print(f"Error opening file dialog: {e}")
+            return 1
+
     print("\n" + "="*60)
     print("SCALE OCR VIDEO PROCESSOR")
     print("="*60)
@@ -682,7 +716,7 @@ def main():
     else:
         # strict mode disables smoothing by default (window=1)
         smoothing_window = 1 if args.strict else 3
-    print(f"\n🔧 Applying temporal smoothing (window={smoothing_window})...")
+    print(f"\nApplying temporal smoothing (window={smoothing_window})...")
     raw_weights = [r['raw_weight'] for r in results]
     smoothed_weights = apply_temporal_smoothing(raw_weights, smoothing_window)
     
@@ -690,7 +724,7 @@ def main():
     for i, result in enumerate(results):
         result['smoothed_weight'] = smoothed_weights[i]
     
-    print(f"🔍 Flagging problematic predictions...")
+    print(f"Flagging problematic predictions...")
 
     # Determine thresholds (strict mode makes flagging aggressive)
     if args.strict:
