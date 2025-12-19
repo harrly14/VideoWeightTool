@@ -181,10 +181,10 @@ def get_transforms(image_size=(256, 64), is_train=False):
             
             # augmentation
             A.Rotate(limit=5, p=0.5),
-            # Translation augmentation (shift x/y by up to 10%)
-            A.Affine(translate_percent=0.1, p=0.5),
+            # Translation augmentation (shift x/y by up to 5% - reduced to prevent digits from leaving frame)
+            A.Affine(translate_percent=0.05, p=0.3),
             A.RandomBrightnessContrast(brightness_limit=0.3, contrast_limit=0.3, p=0.7),
-            A.GaussNoise(p=0.5),
+            A.GaussNoise(var_limit=(10.0, 50.0), p=0.5),
             A.RandomGamma(gamma_limit=(80, 120), p=0.3),
             A.Sharpen(alpha=(0.2, 0.5), p=0.3),
 
@@ -199,7 +199,8 @@ def get_transforms(image_size=(256, 64), is_train=False):
             ),
             A.CenterCrop(height=target_height, width=target_width),
             
-            A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+            # Grayscale-appropriate normalization (all channels identical after CLAHE)
+            A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
             
             ToTensorV2(),
         ])
@@ -217,7 +218,8 @@ def get_transforms(image_size=(256, 64), is_train=False):
                 position='center'
             ),
             A.CenterCrop(height=target_height, width=target_width),
-            A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+            # Grayscale-appropriate normalization (all channels identical after CLAHE)
+            A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
             ToTensorV2(),
         ])
 def create_dataloaders(

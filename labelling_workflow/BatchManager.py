@@ -190,7 +190,7 @@ class BatchManager:
         finally:
             video.release()
     
-    def write_results(self, filename: str, frame_data: dict, start_frame: int | None = None, end_frame: int | None = None):
+    def write_results(self, filename: str, frame_data: dict):
         """
         Append labelled frame data to CSV.
         
@@ -208,11 +208,11 @@ class BatchManager:
                 writer = csv.writer(f)
                 
                 if write_header:
-                    writer.writerow(['filename', 'frame_number', 'weight', 'start_frame', 'end_frame'])
+                    writer.writerow(['filename', 'frame_number', 'weight'])
                 
                 for frame_num, weight in sorted(frame_data.items()):
                     if weight != '0':
-                        writer.writerow([filename, frame_num, weight, start_frame, end_frame])
+                        writer.writerow([filename, frame_num, weight])
             
             self.csv_exists = True
         except Exception as e:
@@ -237,7 +237,7 @@ class BatchManager:
             try:
                 print(f"[{idx}/{total}] Processing: {filename}")
                 
-                frame_data, result_action, start_frame, end_frame = self.process_single_video(video_path, idx, total)
+                frame_data, result_action, _, _ = self.process_single_video(video_path, idx, total)
                 
                 if frame_data is None or not frame_data:
                     print(f"No labels for {filename}")
@@ -246,7 +246,7 @@ class BatchManager:
                         break
                     continue
                 
-                self.write_results(filename, frame_data, start_frame, end_frame)
+                self.write_results(filename, frame_data)
                 processed_count += 1
                 
                 labelled_count = len(frame_data)

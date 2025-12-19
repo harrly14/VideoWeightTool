@@ -7,21 +7,22 @@ import cv2
 import numpy as np
 import pandas as pd
 import argparse
+import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Tuple
 from PyQt5.QtWidgets import (QApplication, QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, 
                              QGroupBox, QMessageBox, QAction, QProgressDialog, QFileDialog, QSlider)
-from PyQt5.QtGui import QPixmap, QImage, QPainter, QPen, QColor
-from PyQt5.QtCore import Qt, QPoint, pyqtSignal, QTimer, QThreadPool, QRunnable, pyqtSlot
+from PyQt5.QtGui import QPixmap, QImage
+from PyQt5.QtCore import Qt, QTimer, QThreadPool, QRunnable, pyqtSlot
 from functools import partial
 
 # Add project root to path to allow imports if needed
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Also add training_scripts directory for CropLabel import when running from project root
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-CNN_WIDTH = 256
-CNN_HEIGHT = 64
-CNN_ASPECT_RATIO = CNN_WIDTH / CNN_HEIGHT
-MIN_HEIGHT = 32
+from CropLabel import CNNCropLabel, CNN_WIDTH, CNN_HEIGHT
 
 def apply_clahe(frame):
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -30,360 +31,6 @@ def apply_clahe(frame):
     bgr_enhanced = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
     return bgr_enhanced
 
-class CNNCropLabel(QLabel):
-    crop_selected = pyqtSignal(int, int, int, int)
-    HANDLE_RADIUS = 10
-    CORNER_RADIUS = 6
-    
-    def __init__(self) -> None:
-        super().__init__()
-        self.crop_rect: Optional[Tuple[int, int, int, int]] = None  # (x, y, w, h) in image coordinates
-        self.original_w: int = 0
-        self.original_h: int = 0
-        self.aspect_ratio = CNN_ASPECT_RATIO
-        self.setMouseTracking(True)
-        
-        self.action = None
-        self.drag_start_pos = None
-        self.initial_crop_rect = None
-        
-        self.zoom_level = 1.0
-        self.pan_offset_x = 0  # in original image coordinates
-        self.pan_offset_y = 0
-        
-        self.pan_dragging = False
-        self.pan_drag_start = None
-        self.pan_drag_start_offset = None
-
-        # Standard ROI defaults
-        self.std_x = 625
-        self.std_y = 300
-        self.std_w = 893
-        self.std_h = 223
-    
-    def set_standard_roi(self, x: int, y: int, w: int, h: int) -> None:
-        if self.original_w > 0 and self.original_h > 0:
-            if x < 0 or y < 0 or x + w > self.original_w or y + h > self.original_h:
-                print(f"Warning: Standard ROI ({x},{y},{w},{h}) out of bounds for image {self.original_w}x{self.original_h}. Ignoring.")
-                return
-        self.std_x = x
-        self.std_y = y
-        self.std_w = w
-        self.std_h = h
-    
-    def set_original_size(self, w: int, h: int) -> None:
-        self.original_w = w
-        self.original_h = h
-        if self.crop_rect is None:
-            self.reset_crop_to_standard()
-    
-    def reset_crop_to_standard(self):
-        if not self.original_w or not self.original_h:
-            return
-        
-        w, h = self.original_w, self.original_h
-        crop_w = self.std_w if w > self.std_w else int(w * 0.5)
-        crop_h = self.std_h if h > self.std_h else int(crop_w / self.aspect_ratio)
-        crop_x = self.std_x if w > self.std_x else (w - crop_w) // 2
-        crop_y = self.std_y if h > self.std_y else (h - crop_h) // 2
-        self.crop_rect = (crop_x, crop_y, crop_w, crop_h)
-        self.crop_selected.emit(*self.crop_rect)
-        self.update()
-    
-    def set_zoom(self, zoom_level: float, pan_x: Optional[float] = None, pan_y: Optional[float] = None) -> None:
-        """Set zoom level and optional pan offset."""
-        if not self.original_w or not self.original_h:
-            return
-        self.zoom_level = max(1.0, min(zoom_level, 10.0))  # Clamp between 1x and 10x
-        
-        if pan_x is not None:
-            # Clamp pan offset to keep visible region within bounds
-            max_pan_x = max(0, self.original_w - self.original_w / self.zoom_level)
-            self.pan_offset_x = max(0, min(pan_x, max_pan_x))
-        
-        if pan_y is not None:
-            max_pan_y = max(0, self.original_h - self.original_h / self.zoom_level)
-            self.pan_offset_y = max(0, min(pan_y, max_pan_y))
-        
-        self.update()
-    
-    def _get_display_params(self) -> Optional[Tuple[float, int, int, float, float]]:
-        if not self.original_w or not self.original_h:
-            return None
-        label_w = self.width()
-        label_h = self.height()
-        
-        visible_w = self.original_w / self.zoom_level
-        visible_h = self.original_h / self.zoom_level
-        
-        # Scale to fit the visible region in the label
-        scale = min(label_w / visible_w, label_h / visible_h)
-        display_w = int(visible_w * scale)
-        display_h = int(visible_h * scale)
-        offset_x = (label_w - display_w) // 2
-        offset_y = (label_h - display_h) // 2
-        return scale, offset_x, offset_y, visible_w, visible_h
-
-    def _image_to_label(self, img_rect: Tuple[int, int, int, int]) -> Optional[Tuple[int, int, int, int]]:
-        params = self._get_display_params()
-        if not params: return None
-        scale, off_x, off_y, visible_w, visible_h = params
-        x, y, w, h = img_rect
-        
-        # Adjust for pan offset (subtract because we're viewing a shifted region)
-        x_rel = x - self.pan_offset_x
-        y_rel = y - self.pan_offset_y
-        
-        lx = int(x_rel * scale) + off_x
-        ly = int(y_rel * scale) + off_y
-        lw = int(w * scale)
-        lh = int(h * scale)
-        return (lx, ly, lw, lh)
-
-    def _label_to_image_pt(self, pos: QPoint) -> Tuple[Optional[int], Optional[int]]:
-        params = self._get_display_params()
-        if not params: 
-            return None, None
-        scale, off_x, off_y, visible_w, visible_h = params
-        
-        # Convert label position to image-relative position
-        ix_rel = int((pos.x() - off_x) / scale)
-        iy_rel = int((pos.y() - off_y) / scale)
-        
-        # Add pan offset to get absolute image coordinates
-        ix = ix_rel + int(self.pan_offset_x)
-        iy = iy_rel + int(self.pan_offset_y)
-        return ix, iy
-
-    def mousePressEvent(self, event) -> None:  # event: QMouseEvent
-        if event.button() != Qt.MouseButton.LeftButton:
-            return
-        
-        if not self.crop_rect:
-            return
-        
-        l_rect = self._image_to_label(self.crop_rect)
-        if not l_rect:
-            # If zoomed in, allow panning
-            if self.zoom_level > 1.0:
-                self.pan_dragging = True
-                self.pan_drag_start = event.pos()
-                self.pan_drag_start_offset = (self.pan_offset_x, self.pan_offset_y)
-                self.setCursor(Qt.CursorShape.ClosedHandCursor)
-            return
-        
-        lx, ly, lw, lh = l_rect
-        x, y = event.pos().x(), event.pos().y()
-        
-        handle_r = self.HANDLE_RADIUS
-        # Check handles
-        if abs(x - lx) < handle_r and abs(y - ly) < handle_r:
-            self.action = 'resize_tl'
-        elif abs(x - (lx + lw)) < handle_r and abs(y - ly) < handle_r:
-            self.action = 'resize_tr'
-        elif abs(x - lx) < handle_r and abs(y - (ly + lh)) < handle_r:
-            self.action = 'resize_bl'
-        elif abs(x - (lx + lw)) < handle_r and abs(y - (ly + lh)) < handle_r:
-            self.action = 'resize_br'
-        elif lx < x < lx + lw and ly < y < ly + lh:
-            self.action = 'move'
-        else:
-            # Click outside crop box - allow panning if zoomed in
-            if self.zoom_level > 1.0:
-                self.pan_dragging = True
-                self.pan_drag_start = event.pos()
-                self.pan_drag_start_offset = (self.pan_offset_x, self.pan_offset_y)
-                self.setCursor(Qt.CursorShape.ClosedHandCursor)
-            self.action = None
-            return
-            
-        self.drag_start_pos = event.pos()
-        self.initial_crop_rect = self.crop_rect
-
-    def mouseMoveEvent(self, event) -> None:  # event: QMouseEvent
-        if not self.original_w or not self.original_h:
-            return
-        if self.pan_dragging and self.pan_drag_start and self.pan_drag_start_offset:
-            dx_screen = event.pos().x() - self.pan_drag_start.x()
-            dy_screen = event.pos().y() - self.pan_drag_start.y()
-            
-            params = self._get_display_params()
-            if params:
-                scale, off_x, off_y, visible_w, visible_h = params
-                dx_img = -dx_screen / scale  # Negative because dragging right should pan left
-                dy_img = -dy_screen / scale
-                
-                new_pan_x = self.pan_drag_start_offset[0] + dx_img
-                new_pan_y = self.pan_drag_start_offset[1] + dy_img
-                
-                max_pan_x = max(0, self.original_w - visible_w)
-                max_pan_y = max(0, self.original_h - visible_h)
-                self.pan_offset_x = max(0, min(new_pan_x, max_pan_x))
-                self.pan_offset_y = max(0, min(new_pan_y, max_pan_y))
-                
-                parent = self.parent()
-                if parent and hasattr(parent, 'on_pan_drag'):
-                    parent.on_pan_drag(self.pan_offset_x, self.pan_offset_y)
-                
-                self.update()
-            return
-        
-        if not self.crop_rect: return
-        
-        # Cursor update
-        l_rect = self._image_to_label(self.crop_rect)
-        if l_rect and not self.action:
-            lx, ly, lw, lh = l_rect
-            x, y = event.pos().x(), event.pos().y()
-            handle_r = self.HANDLE_RADIUS
-            if (abs(x - lx) < handle_r and abs(y - ly) < handle_r) or \
-               (abs(x - (lx + lw)) < handle_r and abs(y - (ly + lh)) < handle_r):
-                self.setCursor(Qt.CursorShape.SizeFDiagCursor)
-            elif (abs(x - (lx + lw)) < handle_r and abs(y - ly) < handle_r) or \
-                 (abs(x - lx) < handle_r and abs(y - (ly + lh)) < handle_r):
-                self.setCursor(Qt.CursorShape.SizeBDiagCursor)
-            elif lx < x < lx + lw and ly < y < ly + lh:
-                self.setCursor(Qt.CursorShape.SizeAllCursor)
-            else:
-                if self.zoom_level > 1.0:
-                    self.setCursor(Qt.CursorShape.OpenHandCursor)
-                else:
-                    self.setCursor(Qt.CursorShape.ArrowCursor)
-        
-        if not self.action: return
-
-        curr_ix, curr_iy = self._label_to_image_pt(event.pos())
-        if curr_ix is None: return
-        
-        if not self.initial_crop_rect:
-            return
-        ix, iy, iw, ih = self.initial_crop_rect
-        
-        if self.action == 'move':
-            start_ix, start_iy = self._label_to_image_pt(self.drag_start_pos)
-            if start_ix is None or start_iy is None:
-                return
-            dx = curr_ix - start_ix
-            dy = curr_iy - start_iy
-            
-            nx = ix + dx
-            ny = iy + dy
-            
-            nx = max(0, min(nx, self.original_w - iw))
-            ny = max(0, min(ny, self.original_h - ih))
-            self.crop_rect = (nx, ny, iw, ih)
-            
-        elif 'resize' in self.action:
-            if self.action == 'resize_br':
-                fixed_x, fixed_y = ix, iy
-                moving_x, moving_y = curr_ix, curr_iy
-            elif self.action == 'resize_tl':
-                fixed_x, fixed_y = ix + iw, iy + ih
-                moving_x, moving_y = curr_ix, curr_iy
-            elif self.action == 'resize_tr':
-                fixed_x, fixed_y = ix, iy + ih
-                moving_x, moving_y = curr_ix, curr_iy
-            elif self.action == 'resize_bl':
-                fixed_x, fixed_y = ix + iw, iy
-                moving_x, moving_y = curr_ix, curr_iy
-            
-            w_cand = abs(moving_x - fixed_x)
-            h_cand = int(w_cand / self.aspect_ratio)
-            
-            if h_cand < MIN_HEIGHT:
-                h_cand = MIN_HEIGHT
-                w_cand = int(h_cand * self.aspect_ratio)
-                
-            if self.action == 'resize_br':
-                max_w = self.original_w - ix
-                max_h = self.original_h - iy
-                if w_cand > max_w: w_cand = max_w; h_cand = int(w_cand / self.aspect_ratio)
-                if h_cand > max_h: h_cand = max_h; w_cand = int(h_cand * self.aspect_ratio)
-                self.crop_rect = (ix, iy, w_cand, h_cand)
-                
-            elif self.action == 'resize_tl':
-                br_x, br_y = ix + iw, iy + ih
-                max_w = br_x
-                max_h = br_y
-                if w_cand > max_w: w_cand = max_w; h_cand = int(w_cand / self.aspect_ratio)
-                if h_cand > max_h: h_cand = max_h; w_cand = int(h_cand * self.aspect_ratio)
-                self.crop_rect = (br_x - w_cand, br_y - h_cand, w_cand, h_cand)
-
-            elif self.action == 'resize_tr':
-                bl_x, bl_y = ix, iy + ih
-                max_w = self.original_w - bl_x
-                max_h = bl_y
-                if w_cand > max_w: w_cand = max_w; h_cand = int(w_cand / self.aspect_ratio)
-                if h_cand > max_h: h_cand = max_h; w_cand = int(h_cand * self.aspect_ratio)
-                self.crop_rect = (bl_x, bl_y - h_cand, w_cand, h_cand)
-
-            elif self.action == 'resize_bl':
-                tr_x, tr_y = ix + iw, iy
-                max_w = tr_x
-                max_h = self.original_h - tr_y
-                if w_cand > max_w: w_cand = max_w; h_cand = int(w_cand / self.aspect_ratio)
-                if h_cand > max_h: h_cand = max_h; w_cand = int(h_cand * self.aspect_ratio)
-                self.crop_rect = (tr_x - w_cand, tr_y, w_cand, h_cand)
-
-        self.update()
-        self.crop_selected.emit(*self.crop_rect)
-
-    def mouseReleaseEvent(self, event) -> None:  # event: QMouseEvent
-        if self.pan_dragging:
-            self.pan_dragging = False
-            self.pan_drag_start = None
-            self.pan_drag_start_offset = None
-            # Restore cursor based on zoom state
-            if self.zoom_level > 1.0:
-                self.setCursor(Qt.CursorShape.OpenHandCursor)
-            else:
-                self.setCursor(Qt.CursorShape.ArrowCursor)
-            return
-        
-        self.action = None
-        if self.crop_rect:
-            self.crop_selected.emit(*self.crop_rect)
-
-    def paintEvent(self, event) -> None:  # event: QPaintEvent
-        super().paintEvent(event)
-        parent = self.parent()
-        show_overlay = True
-        if parent and hasattr(parent, 'preview_crop_button'):
-            show_overlay = not parent.preview_crop_button.isChecked()
-        
-        if self.crop_rect and show_overlay:
-            l_rect = self._image_to_label(self.crop_rect)
-            if l_rect:
-                lx, ly, lw, lh = l_rect
-                painter = QPainter(self)
-                painter.setPen(QPen(QColor(0, 255, 0), 2, Qt.PenStyle.SolidLine))
-                painter.drawRect(lx, ly, lw, lh)
-                
-                grid_color = QColor(255, 255, 255, 80)  # semi-transparent white
-                painter.setPen(QPen(grid_color, 1, Qt.PenStyle.DashLine))
-                third_w = lw // 3
-                painter.drawLine(lx + third_w, ly, lx + third_w, ly + lh)
-                painter.drawLine(lx + 2 * third_w, ly, lx + 2 * third_w, ly + lh)
-                
-                painter.setBrush(QColor(255, 255, 0))
-                r = self.CORNER_RADIUS
-                painter.drawEllipse(QPoint(lx, ly), r, r)
-                painter.drawEllipse(QPoint(lx + lw, ly), r, r)
-                painter.drawEllipse(QPoint(lx, ly + lh), r, r)
-                painter.drawEllipse(QPoint(lx + lw, ly + lh), r, r)
-                
-                painter.setPen(QPen(QColor(255, 255, 0), 1))
-                ratio_text = f"{self.crop_rect[2]}x{self.crop_rect[3]}"
-                painter.drawText(lx + 5, ly - 5, ratio_text)
-    
-    def wheelEvent(self, event) -> None:  # event: QWheelEvent
-        """Forward wheel events to parent window for zoom handling."""
-        parent = self.parent()
-        if parent and hasattr(parent, 'handle_wheel_event'):
-            parent.handle_wheel_event(event)
-            event.accept()
-        else:
-            super().wheelEvent(event)
 
 class ExtractionWorker(QRunnable):
     def __init__(self, video_path, frames, crop_rect, output_folder, video_name):
@@ -401,7 +48,13 @@ class ExtractionWorker(QRunnable):
             print(f"Error: Could not open video {self.video_path} in background worker.")
             return
 
-        crop_x, crop_y, crop_w, crop_h = self.crop_rect
+        # Expect a quad [[x,y], ...] (TL, TR, BR, BL).
+        if not (isinstance(self.crop_rect, (list, tuple)) and len(self.crop_rect) == 4):
+            print(f"Error: Expected quad ROI for worker but got: {self.crop_rect!r}")
+            cap.release()
+            return
+        pts = [(int(p[0]), int(p[1])) for p in self.crop_rect]
+
         count = 0
         
         for frame_num in self.frames:
@@ -410,14 +63,17 @@ class ExtractionWorker(QRunnable):
             if not ret:
                 print(f"Warning: Could not read frame {frame_num} from {self.video_name}")
                 continue
-                
-            cropped = frame[crop_y:crop_y+crop_h, crop_x:crop_x+crop_w]
-            current_h, current_w = cropped.shape[:2]
-            
-            if current_w > CNN_WIDTH or current_h > CNN_HEIGHT:
-                resized = cv2.resize(cropped, (CNN_WIDTH, CNN_HEIGHT), interpolation=cv2.INTER_AREA)
-            else:
-                resized = cv2.resize(cropped, (CNN_WIDTH, CNN_HEIGHT), interpolation=cv2.INTER_LINEAR)
+
+            # Warp the quad to CNN size (256x64)
+            try:
+                src_pts = np.float32(pts)
+                dst_pts = np.float32([[0, 0], [CNN_WIDTH, 0], [CNN_WIDTH, CNN_HEIGHT], [0, CNN_HEIGHT]])
+                M = cv2.getPerspectiveTransform(src_pts, dst_pts)
+                warped = cv2.warpPerspective(frame, M, (CNN_WIDTH, CNN_HEIGHT), flags=cv2.INTER_LINEAR)
+                resized = warped
+            except Exception as e:
+                print(f"Warning: Could not warp quad ROI for frame {frame_num}: {e}. Skipping frame.")
+                continue
             
             out_name = f"{self.video_name}_{frame_num}.jpg"
             out_path = os.path.join(self.output_folder, out_name)
@@ -490,15 +146,16 @@ class ExtractionWindow(QWidget):
         if success:
             self.video_label.set_original_size(self.original_w, self.original_h)
             
-            # Handle default ROI (carryover)
+            # Handle default ROI (carryover). Only accept a quad: [[x,y], ...] (TL, TR, BR, BL)
             if self.default_roi:
-                x, y, w, h = self.default_roi
-                if x + w <= self.original_w and y + h <= self.original_h:
-                    self.video_label.crop_rect = self.default_roi
-                    self.video_label.crop_selected.emit(*self.default_roi)
-                    self.video_label.update()
-                else:
-                    print(f"ROI {self.default_roi} out of bounds for {self.original_w}x{self.original_h}. Resetting.")
+                try:
+                    if isinstance(self.default_roi, (list, tuple)) and len(self.default_roi) == 4 and all(isinstance(pt, (list, tuple)) and len(pt) == 2 for pt in self.default_roi):
+                        self.video_label.set_points([(int(p[0]), int(p[1])) for p in self.default_roi])
+                    else:
+                        print(f"Invalid default ROI (expected quad [[x,y],...]): {self.default_roi}. Resetting to standard.")
+                        self.video_label.reset_crop_to_standard()
+                except Exception:
+                    print(f"Invalid default ROI: {self.default_roi}. Resetting to standard.")
                     self.video_label.reset_crop_to_standard()
             else:
                 self.video_label.reset_crop_to_standard()
@@ -762,11 +419,23 @@ class ExtractionWindow(QWidget):
         else:
             self.preview_button.setText("CLAHE: Off")
 
-    def on_crop_selected(self, x, y, w, h):
-        self.crop_coords = (x, y, w, h)
+    def on_crop_selected(self, points):
+        # `points` is a list of 4 (x,y) points (TL, TR, BR, BL). Compute bounding rect for preview/cropping.
+        if not points or len(points) != 4:
+            return
+        pts = [(int(p[0]), int(p[1])) for p in points]
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        w = max(1, max_x - min_x)
+        h = max(1, max_y - min_y)
+        self.crop_coords = (min_x, min_y, w, h)
+        # Keep the quad too for copying and saving
+        self.crop_coords_quad = pts
         actual_ratio = w / h if h > 0 else 0
         self.crop_dims_label.setText(
-            f"Crop: {w}x{h} pixels\nRatio: {actual_ratio:.2f}:1\nPosition: ({x}, {y})"
+            f"Crop: {w}x{h} pixels\nRatio: {actual_ratio:.2f}:1\nPosition: ({min_x}, {min_y})\nQuad: {pts}"
         )
         self.update_display_frame()
 
@@ -774,13 +443,16 @@ class ExtractionWindow(QWidget):
         self.video_label.reset_crop_to_standard()
 
     def copy_roi_to_clipboard(self):
-        if self.crop_coords:
-            x, y, w, h = self.crop_coords
-            roi_str = f"{x},{y},{w},{h}"
+        # Only support copying quad ROIs as JSON
+        if getattr(self, 'crop_coords_quad', None):
+            import json as _json
+            roi_str = _json.dumps(self.crop_coords_quad)
             QApplication.clipboard().setText(roi_str)
             original_text = self.copy_roi_button.text()
             self.copy_roi_button.setText("Copied!")
             QTimer.singleShot(1000, lambda: self.copy_roi_button.setText(original_text))
+        else:
+            QMessageBox.warning(self, "No ROI", "Please define a quad ROI before copying to clipboard.")
 
     def seek_to_frame(self, frame_num):
         self.current_frame_index = max(self.start_frame, min(frame_num, self.end_frame - 1))
@@ -953,14 +625,21 @@ class ExtractionWindow(QWidget):
         self.update_display_frame()
 
     def extract_frames(self):
-        if not self.video_label.crop_rect:
-            QMessageBox.warning(self, "Warning", "Please define a crop region first.")
+        # Require a quad ROI from the label
+        if not getattr(self.video_label, 'crop_points', None):
+            QMessageBox.warning(self, "Warning", "Please define a quad crop region first.")
             return
-            
-        # Pass the crop rect back to controller to handle background extraction
+
+        # Pass the quad back to controller to handle background extraction
         self.video.release()
         self.close()
-        self.next_callback(self.video_label.crop_rect)
+        pts = getattr(self.video_label, 'crop_points', None)
+        if not pts:
+            QMessageBox.warning(self, "Warning", "Please define a quad crop region first.")
+            return
+        # Normalize to list-of-lists of ints and pass
+        quad = [[int(p[0]), int(p[1])] for p in pts]
+        self.next_callback(quad)
 
     def skip_video(self):
         self.video.release()
@@ -971,6 +650,7 @@ class ExtractionWindow(QWidget):
 class ExtractionController:
     def __init__(self, csv_path, video_dir, output_dir):
         self.df = pd.read_csv(csv_path)
+        self.csv_path = Path(csv_path)
         self.video_dir = Path(video_dir)
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -979,8 +659,46 @@ class ExtractionController:
         self.current_video_idx = 0
         self.last_roi = None
         self.threadpool = QThreadPool()
+        # Store normalized ROIs as quads: [[x,y], [x,y], [x,y], [x,y]]
+        self.roi_by_video: dict[str, list] = {}
         print(f"Multithreading with maximum {self.threadpool.maxThreadCount()} threads")
         
+    def _write_all_data_json(self) -> None:
+        """Write authoritative metadata & per-video ranges/ROIs to data/all_data.json"""
+        out_dir = self.csv_path.parent if hasattr(self, "csv_path") else Path("data")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / "all_data.json"
+
+        summary = {
+            "created_at": datetime.now(timezone.utc).isoformat() + "Z",
+            "num_samples": int(len(self.df)),
+            "num_videos": int(len(self.unique_videos)),
+            "weight_range": [
+                float(self.df["weight"].min()) if "weight" in self.df.columns else None,
+                float(self.df["weight"].max()) if "weight" in self.df.columns else None,
+            ],
+            "video_ranges": {},
+            "rois": {},
+        }
+
+        if "filename" in self.df.columns and "frame_number" in self.df.columns:
+            for name, group in self.df.groupby("filename"):
+                summary["video_ranges"][name] = {
+                    "min_frame": int(group["frame_number"].min()),
+                    "max_frame": int(group["frame_number"].max())
+                }
+
+        for name, roi in self.roi_by_video.items():
+            # roi must be a list of 4 [x,y] points (quad)
+            try:
+                pts = [[int(p[0]), int(p[1])] for p in roi]
+                summary["rois"][name] = {"quad": pts}
+            except Exception:
+                summary["rois"][name] = None
+
+        with open(out_path, "w") as f:
+            json.dump(summary, f, indent=2, sort_keys=True)
+            
     def start(self):
         self.process_next_video()
         
@@ -1051,16 +769,27 @@ class ExtractionController:
         
     def on_video_complete(self, roi):
         self.last_roi = roi
-        
+
+        video_name = self.unique_videos[self.current_video_idx]
+        if roi:
+            # Expect a quad: list/tuple of four (x,y) pairs
+            if not (isinstance(roi, (list, tuple)) and len(roi) == 4 and all(isinstance(pt, (list, tuple)) and len(pt) == 2 for pt in roi)):
+                print(f"Invalid ROI received (expected quad): {roi!r}")
+            else:
+                pts = [[int(p[0]), int(p[1])] for p in roi]
+                self.roi_by_video[video_name] = pts
+                self._write_all_data_json()  # write/update JSON as videos finish
+
         # Start background extraction for the completed video
         video_name = self.unique_videos[self.current_video_idx]
         video_path = str(self.video_dir / video_name)
         video_data = self.df[self.df['filename'] == video_name]
         frames = video_data['frame_number'].tolist()
-        
-        worker = ExtractionWorker(video_path, frames, roi, str(self.output_dir), video_name)
+
+        # Pass quad points to worker
+        worker = ExtractionWorker(video_path, frames, self.roi_by_video.get(video_name, None), str(self.output_dir), video_name)
         self.threadpool.start(worker)
-        
+
         self.current_video_idx += 1
         self.process_next_video()
         

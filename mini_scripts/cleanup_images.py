@@ -1,119 +1,164 @@
+"""mini_scripts/cleanup_images.py
+
+Improved cleanup script:
+- Prefers `data/all_data.json` for authoritative video ranges (video_ranges.min_frame/max_frame)
+- Falls back to CSV (`start_frame`/`end_frame` or inferred min/max `frame_number` per video)
+- Dry-run by default; use --execute to actually delete/move files
+- Supports moving removed files to a safe directory instead of deleting
+"""
+
+import argparse
+import json
 import os
+import re
+import shutil
+from pathlib import Path
+from typing import Dict, Tuple, Optional
+
 import pandas as pd
 
-def cleanup_images(csv_path, images_dir):
-    if not os.path.exists(csv_path):
-        print(f"CSV file not found: {csv_path}")
-        return
+VIDEO_FRAME_RE = re.compile(r"(?P<video>.+)_(?P<frame>\d+)\.(?P<ext>jpg|jpeg|png)$", re.IGNORECASE)
 
-    if not os.path.exists(images_dir):
-        print(f"Images directory not found: {images_dir}")
-        return
 
-    print(f"Reading valid ranges from {csv_path}...")
+def load_json_ranges(json_path: Path) -> Optional[Dict[str, Tuple[int, int]]]:
+    if not json_path.exists():
+        return None
     try:
-        df = pd.read_csv(csv_path)
-        
-        # Create a dictionary to store valid ranges for each video
-        # Assuming one range per video, or taking the min start and max end if multiple entries exist?
-        # The CSV structure seems to have multiple rows per video, but start_frame and end_frame seem consistent for a video.
-        # Let's verify if start/end frame are consistent per video or per row.
-        # Based on previous read_file output:
-        # GH010167.MP4,1243,6.825,1243,19399
-        # GH010167.MP4,2042,7.471,1243,19399
-        # It seems consistent. But to be safe, I'll group by filename and take the min start and max end, 
-        # OR just check if the frame is valid for *any* row corresponding to that video?
-        # Actually, the user said "check this csv ... for frames that are outside the start/end frame index range".
-        # This implies that for a given row, the frame_number must be within start_frame and end_frame.
-        # But for images, we just have the image file. We don't know which specific "row" it belongs to if there were multiple ranges.
-        # However, looking at the data, it seems `start_frame` and `end_frame` define the valid segment of the video *globally* for that video file in this dataset context.
-        # So I will assume that for a given video filename, there is a global valid range defined by the min(start_frame) and max(end_frame) across all rows for that video.
-        # Or more likely, start_frame and end_frame are the same for all rows of a video.
-        
-        # Let's aggregate ranges per video
-        video_ranges = {}
-        for index, row in df.iterrows():
-            filename = row['filename']
-            start = row['start_frame']
-            end = row['end_frame']
-            
-            if filename not in video_ranges:
-                video_ranges[filename] = {'start': start, 'end': end}
+        with json_path.open("r") as f:
+            data = json.load(f)
+        vr = data.get("video_ranges", {})
+        return {k: (int(v["min_frame"]), int(v["max_frame"])) for k, v in vr.items()}
+    except Exception:
+        return None
+
+
+def load_csv_ranges(csv_path: Path) -> Optional[Dict[str, Tuple[int, int]]]:
+    if not csv_path.exists():
+        return None
+    df = pd.read_csv(csv_path)
+
+    # Prefer explicit per-row start_frame/end_frame columns if present
+    if "start_frame" in df.columns and "end_frame" in df.columns:
+        ranges = {}
+        grouped = df.groupby("filename")
+        for name, g in grouped:
+            start = int(g["start_frame"].mode().iloc[0]) if not g["start_frame"].isnull().all() else int(g["start_frame"].min())
+            end = int(g["end_frame"].mode().iloc[0]) if not g["end_frame"].isnull().all() else int(g["end_frame"].max())
+            ranges[name] = (start, end)
+        return ranges
+
+    # Fallback: infer min/max frame number from labeled rows
+    if "frame_number" in df.columns:
+        ranges = {}
+        grouped = df.groupby("filename")
+        for name, g in grouped:
+            start = int(g["frame_number"].min())
+            end = int(g["frame_number"].max())
+            ranges[name] = (start, end)
+        return ranges
+
+    return None
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Cleanup image files outside per-video ranges")
+    parser.add_argument("--csv", required=True, help="Path to labels CSV used to identify videos (e.g., data/labels/train_labels.csv)")
+    parser.add_argument("--images-dir", default="data/images", help="Directory containing extracted images")
+    parser.add_argument("--json", default="data/all_data.json", help="Path to all_data.json produced by extractor (preferred)")
+    parser.add_argument("--exts", default="jpg,jpeg,png", help="Comma-separated list of image extensions to consider")
+    parser.add_argument("--execute", action="store_true", help="Actually delete/move files; default is dry-run")
+    parser.add_argument("--move-to", default=None, help="If set and --execute, move removed files to this directory instead of deleting")
+    parser.add_argument("--delete-unknown", action="store_true", help="Also delete images whose video is not present in ranges (be careful)")
+    parser.add_argument("--verbose", action="store_true")
+
+    args = parser.parse_args()
+
+    csv_path = Path(args.csv)
+    images_dir = Path(args.images_dir)
+    json_path = Path(args.json)
+
+    exts = {e.lower() for e in args.exts.split(",")}
+
+    json_ranges = load_json_ranges(json_path)
+    if json_ranges is not None:
+        ranges = json_ranges
+        source = f"json:{json_path}"
+    else:
+        csv_ranges = load_csv_ranges(csv_path)
+        if csv_ranges is None:
+            print("Could not determine video ranges from JSON or CSV. Aborting.")
+            return
+        ranges = csv_ranges
+        source = f"csv:{csv_path}"
+
+    total = 0
+    candidates = []  # list of Path
+    to_remove = []
+
+    for p in images_dir.iterdir():
+        if not p.is_file():
+            continue
+        total += 1
+        m = VIDEO_FRAME_RE.match(p.name)
+        if not m:
+            # filename doesn't match expected pattern; keep by default
+            if args.verbose:
+                print(f"SKIP (no-match): {p.name}")
+            continue
+        video = m.group("video")
+        frame = int(m.group("frame"))
+        ext = m.group("ext").lower()
+        if ext not in exts:
+            continue
+
+        candidates.append((p, video, frame))
+
+        if video in ranges:
+            start, end = ranges[video]
+            if frame < start or frame > end:
+                to_remove.append((p, video, frame, start, end))
+        else:
+            # Unknown video: delete only if --delete-unknown
+            if args.delete_unknown:
+                to_remove.append((p, video, frame, None, None))
+
+    print(f"Scanned {total} files in {images_dir}. Considered {len(candidates)} image files matching pattern.")
+    print(f"Found {len(to_remove)} files outside declared ranges (source={source}).")
+
+    if len(to_remove) == 0:
+        print("Nothing to do.")
+        return
+
+    if not args.execute:
+        print("Dry-run mode (use --execute to remove/move files). Example files to remove:")
+        for p, video, frame, start, end in to_remove[:20]:
+            if start is None:
+                print(f"  {p.name}  (unknown video)")
             else:
-                # If there are multiple ranges, we might need to be careful.
-                # But based on the sample, it looks like metadata for the video clip.
-                # Let's assume the widest range if they differ, or just take the first one found.
-                # Actually, if I look at the previous output:
-                # GH010168.MP4,161,7.502,0,19399
-                # GH010168.MP4,154,7.499,0,19399
-                # It seems consistent.
-                pass
-        
-        print(f"Found ranges for {len(video_ranges)} videos.")
-        
-        files = os.listdir(images_dir)
-        removed_count = 0
-        kept_count = 0
-        
-        for file in files:
-            if not file.endswith('.jpg'):
-                continue
-                
-            # Parse filename: VideoName.MP4_FrameNumber.jpg
-            # We need to be careful about the split.
-            # The format seems to be: {video_filename}_{frame_number}.jpg
-            # video_filename ends with .MP4
-            
-            try:
-                # Split from the right to get the frame number
-                base_name = os.path.splitext(file)[0] # Remove .jpg
-                parts = base_name.rsplit('_', 1)
-                
-                if len(parts) != 2:
-                    print(f"Skipping file with unexpected format: {file}")
-                    continue
-                    
-                video_name = parts[0]
-                frame_number_str = parts[1]
-                
-                if not frame_number_str.isdigit():
-                     print(f"Skipping file with non-numeric frame number: {file}")
-                     continue
-                     
-                frame_number = int(frame_number_str)
-                
-                if video_name in video_ranges:
-                    valid_range = video_ranges[video_name]
-                    if not (valid_range['start'] <= frame_number <= valid_range['end']):
-                        print(f"Removing {file}: Frame {frame_number} outside range [{valid_range['start']}, {valid_range['end']}]")
-                        os.remove(os.path.join(images_dir, file))
-                        removed_count += 1
-                    else:
-                        kept_count += 1
-                else:
-                    # If video is not in CSV, should we remove it?
-                    # The user said "make sure that all images ... are in the correct range".
-                    # If we don't know the range, we can't verify.
-                    # But usually, if it's not in the dataset CSV, it might be extraneous.
-                    # However, to be safe and strictly follow "outside the start/end frame index range",
-                    # I will only remove if I KNOW it is outside the range.
-                    # If I don't have a range, I'll skip it (or maybe warn).
-                    # Let's assume we only clean images for videos we know about.
-                    # print(f"Skipping {file}: Video {video_name} not found in CSV.")
-                    pass
+                print(f"  {p.name}  (frame {frame} outside {start}-{end})")
+        print("...")
+        return
 
-            except Exception as e:
-                print(f"Error processing {file}: {e}")
-                
-        print(f"Finished cleanup. Removed {removed_count} images. Kept {kept_count} images.")
+    # Execute removals
+    if args.move_to:
+        move_to = Path(args.move_to)
+        move_to.mkdir(parents=True, exist_ok=True)
+    deleted = 0
+    moved = 0
+    for p, video, frame, start, end in to_remove:
+        try:
+            if args.move_to:
+                dest = move_to / p.name
+                shutil.move(str(p), str(dest))
+                moved += 1
+                if args.verbose:
+                    print(f"MOVED {p} -> {dest}")
+            else:
+                p.unlink()
+                deleted += 1
+                if args.verbose:
+                    print(f"DELETED {p}")
+        except Exception as e:
+            print(f"Error removing {p}: {e}")
 
-    except Exception as e:
-        print(f"Error reading CSV: {e}")
-
-if __name__ == "__main__":
-    # Adjust paths
-    workspace_root = os.getcwd()
-    csv_path = os.path.join(workspace_root, "data/all_data.csv")
-    images_dir = os.path.join(workspace_root, "data/images")
-    
-    cleanup_images(csv_path, images_dir)
+    print(f"Done. Deleted: {deleted}, Moved: {moved}.")
