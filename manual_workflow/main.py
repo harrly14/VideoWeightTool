@@ -148,7 +148,7 @@ if __name__ == "__main__":
             sys.exit(1)
 
     QMessageBox.information(None, "Select video file", "You will now select a video file. " \
-    "\nI reccomend not using a file on a network drive, as latency issues could cause the application to crash")
+    "\nI recommend not using a file on a network drive, as latency issues could cause the application to crash")
 
     options = QFileDialog.Options()
     video_filter = "Video Files (*.mp4 *.MP4 *.mov *.MOV *.avi *.AVI *.mkv *.MKV);;All Files (*)"
