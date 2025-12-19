@@ -381,10 +381,19 @@ def train_model(
     if resume_from and Path(resume_from).exists():
         print(f"\nResuming from checkpoint: {resume_from}")
         checkpoint = torch.load(resume_from, map_location=device)
-        model.load_state_dict(checkpoint['model_state_dict'])
+        # Handle torch.compile prefix
+        state_dict = checkpoint['model_state_dict']
+        fixed_state_dict = {}
+        for k, v in state_dict.items():
+            if k.startswith('_orig_mod.'):
+                fixed_state_dict[k[len('_orig_mod.'):]] = v
+            else:
+                fixed_state_dict[k] = v
+        
+        model.load_state_dict(fixed_state_dict)
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         start_epoch = checkpoint['epoch'] + 1
-        best_val_loss = checkpoint['best_val_loss']
+        best_val_loss = checkpoint.get('best_val_loss', float('inf'))
         print(f"Resumed from epoch {start_epoch}")
     
     history = {
