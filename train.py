@@ -381,14 +381,23 @@ def train_model(
     if resume_from and Path(resume_from).exists():
         print(f"\nResuming from checkpoint: {resume_from}")
         checkpoint = torch.load(resume_from, map_location=device)
-        # Handle torch.compile prefix
         state_dict = checkpoint['model_state_dict']
+        
+        # Handle torch.compile prefix based on model's compiled state
         fixed_state_dict = {}
+        model_has_orig = hasattr(model, '_orig_mod')  # Check if model is compiled
+        
         for k, v in state_dict.items():
             if k.startswith('_orig_mod.'):
-                fixed_state_dict[k[len('_orig_mod.'):]] = v
+                if model_has_orig:
+                    fixed_state_dict[k] = v  # Keep prefix if model is compiled
+                else:
+                    fixed_state_dict[k[len('_orig_mod.'):]] = v  # Strip prefix if model is not compiled
             else:
-                fixed_state_dict[k] = v
+                if model_has_orig:
+                    fixed_state_dict['_orig_mod.' + k] = v  # Add prefix if model is compiled
+                else:
+                    fixed_state_dict[k] = v  # Keep as-is if model is not compiled
         
         model.load_state_dict(fixed_state_dict)
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])

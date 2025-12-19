@@ -129,6 +129,7 @@ Key arguments:
 - `--epochs`: Default 400
 - `--data-dir`: Directory containing `images/` and `labels/` (default: `data`)
 - `--save-dir`: Directory to save checkpoints (default: `models`)
+- `--resume`: Path to checkpoint to resume from (i.e. `models/best_model.pth`)
 - `--no-amp`: Disable mixed precision training (useful for debugging)
 
 Models are saved to `models/` (or your specified `--save-dir`):
