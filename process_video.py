@@ -115,10 +115,13 @@ def apply_clahe(frame):
 
 def preprocess_frame(frame, transform):
     """Preprocess frame for model input with CLAHE enhancement."""
-    enhanced = apply_clahe(frame)
-    image = cv2.cvtColor(enhanced, cv2.COLOR_BGR2RGB)
+    # Just convert to RGB, as Albumentations expects RGB
+    image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    
+    # Pass to the pipeline (which does CLAHE -> Crop -> Normalize -> Tensor)
     augmented = transform(image=image)
     image_tensor = augmented['image']
+    
     return image_tensor
 
 # ============================================================
