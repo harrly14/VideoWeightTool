@@ -329,8 +329,8 @@ def validate(model, val_loader, criterion, encoder, device, epoch):
     
     print(f"\nValidation Results:")
     print(f"  Loss: {avg_loss:.4f}")
-    print(f"  CER: {cer:.4f} (Acc: {char_accuracy:.2f}%)")
-    print(f"  WER: {wer:.4f} (Acc: {seq_accuracy:.2f}%)")
+    print(f"  CER: {cer:.4f} (Accuracy: {char_accuracy:.2f}%)")
+    print(f"  WER: {wer:.4f} (Accuracy: {seq_accuracy:.2f}%)")
     
     print(f"\nExample Predictions:")
     num_examples = min(5, len(all_predictions))
