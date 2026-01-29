@@ -63,7 +63,7 @@ def run_script(path, args=[]):
     cmd = [sys.executable, full_path] + args
     print(f"{COLORS['BLUE']}Running: {' '.join(cmd)}{COLORS['ENDC']}")
 
-    time.sleep(0.5)
+    time.sleep(1)
 
     try:
         result = subprocess.run(cmd, cwd=ROOT_DIR, check=True)
@@ -140,11 +140,35 @@ def menu_training():
         
         if choice == '1':
             epochs = stylized_input("Number of epochs", "50")
-            run_script("pipelines/train.py", ["--epochs", epochs])
+            try:
+                epochs_val = int(epochs)
+                if epochs_val <= 0:
+                    raise ValueError
+            except (ValueError, TypeError):
+                print(f"{COLORS['YELLOW']}Invalid epochs value; using default 50{COLORS['ENDC']}")
+                epochs_val = 50
+            run_script("pipelines/train.py", ["--epochs", str(epochs_val)])
+
         elif choice == '2':
             video_path = stylized_input("Video Path")
-            if video_path:
-                run_script("pipelines/inference.py", ["--video_path", video_path])
+            if not video_path: 
+                print(f"{COLORS['RED']}Invalid choice. Please try again...{COLORS['ENDC']}")
+                input(f"\n{COLORS['DIM']}Press Enter to continue...{COLORS['ENDC']}")
+                continue
+                
+            args = ["--video", video_path]
+
+            while True:
+                conservative_run = stylized_input("Would you like to run inference conservatively? (y/n)", "y").strip().lower()
+                if conservative_run in ('y','n'):
+                    break
+                print(f"{COLORS['RED']}Please answer 'y' or 'n'.{COLORS['ENDC']}")
+                    
+            if conservative_run == 'y':
+                args.append("--conservative")
+            
+            run_script("pipelines/inference.py", ["--video", args])
+
         elif choice == '0':
             break
 
@@ -171,7 +195,7 @@ def main():
             sys.exit(0)
         else:
             print(f"{COLORS['RED']}Invalid choice. Please try again.{COLORS['ENDC']}")
-            time.sleep(0.5)
+            input(f"\n{COLORS['DIM']}Press Enter to continue...{COLORS['ENDC']}")
 
 if __name__ == "__main__":
     try:
