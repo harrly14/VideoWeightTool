@@ -388,33 +388,8 @@ FLAG_REASONS = {
 }
 
 def robust_filter_pipeline(results, conf_thresh=FILTER_CONF_THRESH, ent_thresh=FILTER_ENT_THRESH, jump_thresh=FILTER_JUMP_THRESH):
-    """
-    Single-pass robust filtering pipeline.
-    
-    Combines format validation, confidence check, entropy check, and physical delta check
-    with forward-fill in one efficient pass.
-    
-    Args:
-        results: list of dicts with 'raw_weight', 'confidence', 'entropy' keys
-        conf_thresh: minimum confidence to accept prediction
-        ent_thresh: maximum entropy to accept prediction  
-        jump_thresh: maximum weight change (kg) from last valid weight
-    
-    Returns:
-        tuple of:
-            - filtered_weights: list of float|None (forward-filled weights)
-            - flag_reasons: list of str|None (reason codes for flagged frames)
-    
-    Flag reason codes (first failing check wins):
-        - 'bad_format': Raw prediction doesn't match X.XXX pattern
-        - 'parse_error': Could not parse prediction as float
-        - 'low_conf': Confidence below threshold
-        - 'low_nonblank': Confidence is 0 (too few non-blank tokens)
-        - 'high_ent': Entropy above threshold
-        - 'jump': Weight change from last valid exceeds threshold
-        - None: Valid prediction
-    """
-    pattern = re.compile(r'^\d+\.\d{3}$')
+    # exactly 1 digit, dot, exactly 3 digits
+    pattern = re.compile(r'^\d\.\d{3}$')
     
     filtered_weights = []
     flag_reasons = []
@@ -428,41 +403,33 @@ def robust_filter_pipeline(results, conf_thresh=FILTER_CONF_THRESH, ent_thresh=F
         reason = None
         is_valid = False
         parsed_val = None
-        
-        # Check order: format -> parse -> low_nonblank -> confidence -> entropy -> jump
         str_pred = str(pred)
         
-        # 1. Format check
-        if not pattern.match(str_pred):
+        if len(str_pred) != 5:
+            reason = 'bad_format'
+        elif not pattern.match(str_pred):
             reason = 'bad_format'
         else:
-            # 2. Parse check
             try:
                 parsed_val = float(pred)
             except (ValueError, TypeError):
                 reason = 'parse_error'
         
         if reason is None:
-            # 3. Low non-blank check (confidence == 0 means too few non-blank tokens)
             if conf == 0.0:
                 reason = 'low_nonblank'
-            # 4. Confidence check
             elif conf < conf_thresh:
                 reason = 'low_conf'
-            # 5. Entropy check
             elif ent > ent_thresh:
                 reason = 'high_ent'
-            # 6. Physical delta check
             elif last_valid is not None and abs(parsed_val - last_valid) > jump_thresh:
                 reason = 'jump'
             else:
-                # All checks passed
                 is_valid = True
         
         if is_valid:
             last_valid = parsed_val
         
-        # Forward-fill: use last valid weight (may be None if none found yet)
         filtered_weights.append(last_valid)
         flag_reasons.append(reason)
     
