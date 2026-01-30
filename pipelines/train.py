@@ -348,7 +348,7 @@ def train_model(
     hidden_size=256,
     num_lstm_layers=2,
     image_size=(256, 64),
-    save_dir='models',
+    save_dir='data/models',
     data_dir='data',
     resume_from=None,
     use_amp=True,
@@ -459,7 +459,7 @@ def train_model(
     scaler = torch.amp.GradScaler('cuda') if use_amp and device.type == 'cuda' else None
     
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', factor=0.5, patience=5
+        optimizer, mode='min', factor=0.3, patience=8
     )
     
     best_val_loss = float('inf')

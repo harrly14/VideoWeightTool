@@ -78,7 +78,7 @@ class ScaleOCRModel(nn.Module):
             num_layers=num_lstm_layers,
             bidirectional=True,  # Read both forward and backward
             batch_first=True,
-            dropout=0.3 if num_lstm_layers > 1 else 0
+            dropout=0.4 if num_lstm_layers > 1 else 0
         )
         
         # Bidirectional LSTM

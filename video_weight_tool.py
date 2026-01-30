@@ -132,6 +132,7 @@ def menu_training():
 
         print("1. Train New Model")
         print("2. Run Inference on Video")
+        print("3. Evaluate training results")
         print(ELEMENTS['SEPARATOR'])
         print("0. Back to Main Menu")
         print()
@@ -169,6 +170,8 @@ def menu_training():
             
             run_script("pipelines/inference.py", ["--video", args])
 
+        elif choice == '3':
+            run_script("pipelines/evaluate.py")
         elif choice == '0':
             break
 

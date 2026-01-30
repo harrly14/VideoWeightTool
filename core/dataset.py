@@ -184,10 +184,10 @@ def get_transforms(image_size=(256, 64), is_train=False):
                     p=0.3
             ),
                     
-            A.RandomBrightnessContrast(brightness_limit=0.3, contrast_limit=0.3, p=0.7),
-            A.GaussNoise(var_limit=(10.0, 50.0), p=0.5),
+            A.RandomBrightnessContrast(brightness_limit=0.4, contrast_limit=0.4, p=0.8),
+            A.GaussNoise(var_limit=(20.0, 70.0), p=0.6),
             A.RandomGamma(gamma_limit=(80, 120), p=0.3),
-            A.Sharpen(alpha=(0.2, 0.5), p=0.3),
+            A.Sharpen(alpha=(0.3, 0.7), p=0.5),
 
             A.LongestMaxSize(max_size=max(target_width, target_height)),
 
