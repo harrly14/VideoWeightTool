@@ -459,7 +459,7 @@ def train_model(
     scaler = torch.amp.GradScaler('cuda') if use_amp and device.type == 'cuda' else None
     
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', factor=0.3, patience=8
+        optimizer, mode='min', factor=0.5, patience=8
     )
     
     best_val_loss = float('inf')
