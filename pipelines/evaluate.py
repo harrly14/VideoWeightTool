@@ -198,7 +198,7 @@ if __name__ == '__main__':
     parser.add_argument('--output', type=str, default=default_out, help='Output CSV path')
     
     parser.add_argument('--batch-size', type=int, default=32, help='Inference batch size')
-    parser.add_argument('--debug-n-images', type=int, default=0, help='Log N worst incorrect predictions')
+    parser.add_argument('--debug-n-images', type=int, default=5, help='Log N worst incorrect predictions')
     
     parser.add_argument('--confidence-threshold', type=float, default=FILTER_CONF_THRESH, help='Flagging confidence threshold')
     parser.add_argument('--entropy-threshold', type=float, default=FILTER_ENT_THRESH, help='Flagging entropy threshold')
