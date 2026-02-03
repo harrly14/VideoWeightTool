@@ -652,7 +652,7 @@ if __name__ == "__main__":
     parser.add_argument('--epochs', type=int, default=400, help='Number of epochs')
     parser.add_argument('--lr', type=float, default=0.00025, help='Learning rate')
     parser.add_argument('--data-dir', type=str, default='data', help='Directory containing data')
-    parser.add_argument('--save-dir', type=str, default='models', help='Directory to save models')
+    parser.add_argument('--save-dir', type=str, default='data/models', help='Directory to save models')
     parser.add_argument('--resume', type=str, default=None, help='Path to checkpoint to resume from')
     parser.add_argument('--no-amp', action='store_true', help='Disable mixed precision training')
     parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility')
