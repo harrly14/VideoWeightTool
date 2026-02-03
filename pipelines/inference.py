@@ -8,7 +8,7 @@ Flags:
     Input/Output:
         --video PATH           Path to input video file (required)
         --output PATH          Path to output CSV file (default: <video>_weights.csv)
-        --model PATH           Path to trained model (default: models/best_accuracy_model.pth)
+        --model PATH           Path to trained model (default: data/models/best_accuracy_model.pth)
         --roi X1,Y1,...,X4,Y4  ROI as 8 comma-separated quad points (auto-loaded from data/valid_video_sections.json if not provided)
         --save-video           Create annotated output video with weight overlay
 
@@ -709,7 +709,7 @@ Examples:
     
     parser.add_argument('--video', type=str, help='Path to input video file')
     parser.add_argument('--output', type=str, help='Path to output CSV file (default: video_name_weights.csv)')
-    parser.add_argument('--model', type=str, default='data.models/best_accuracy_model.pth', help='Path to trained model')
+    parser.add_argument('--model', type=str, default='data/models/best_accuracy_model.pth', help='Path to trained model')
     parser.add_argument('--roi', type=str, help='ROI as quad points: x1,y1,x2,y2,x3,y3,x4,y4 (auto-loaded from data/valid_video_sections.json if not provided)')
     parser.add_argument('--batch-size', type=int, default=8, help='Batch size for inference')
     parser.add_argument('--checkpoint-every', type=int, default=0, help='Save checkpoint every N frames (0 to disable)')
