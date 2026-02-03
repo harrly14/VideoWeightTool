@@ -131,8 +131,8 @@ def menu_training():
         print_header("Model Training & Inference", breadcrumb)
 
         print("1. Train New Model")
-        print("2. Run Inference on Video")
-        print("3. Evaluate training results")
+        print("2. Evaluate training results")
+        print("3. Run Inference on Video")
         print(ELEMENTS['SEPARATOR'])
         print("0. Back to Main Menu")
         print()
@@ -151,6 +151,9 @@ def menu_training():
             run_script("pipelines/train.py", ["--epochs", str(epochs_val)])
 
         elif choice == '2':
+                    run_script("pipelines/evaluate.py")
+
+        elif choice == '3':
             video_path = stylized_input("Video Path")
             if not video_path: 
                 print(f"{COLORS['RED']}Invalid choice. Please try again...{COLORS['ENDC']}")
@@ -170,8 +173,6 @@ def menu_training():
             
             run_script("pipelines/inference.py", ["--video", args])
 
-        elif choice == '3':
-            run_script("pipelines/evaluate.py")
         elif choice == '0':
             break
 
