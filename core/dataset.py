@@ -17,16 +17,16 @@ def apply_clahe_grayscale(image: np.ndarray, **kwargs) -> np.ndarray:
     This ensures training uses the exact same CLAHE implementation as inference
     (process_video.py), avoiding discrepancies from Albumentations' LAB-based CLAHE.
     
-    Pipeline: RGB -> Grayscale -> CLAHE -> RGB (replicated channels)
+    Pipeline: RGB -> Grayscale -> CLAHE -> single channel output
+    Returns: (H, W, 1) grayscale image for single-channel model input
     """
     grayscale_image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
     
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     enhanced = clahe.apply(grayscale_image)
     
-    rgb_enhanced = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2RGB)
-    
-    return rgb_enhanced
+    # Return as (H, W, 1) for albumentations compatibility
+    return enhanced[:, :, np.newaxis]
 
 class ScaleOCRDataset(Dataset):
     def __init__(self, labels_csv, images_dir='data/images', file_extension='.jpg', 
@@ -200,8 +200,8 @@ def get_transforms(image_size=(256, 64), is_train=False):
             ),
             A.CenterCrop(height=target_height, width=target_width),
             
-            # Grayscale-appropriate normalization (all channels identical after CLAHE)
-            A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
+            # Single channel grayscale normalization
+            A.Normalize(mean=(0.5,), std=(0.5,)),
             
             ToTensorV2(),
         ])
@@ -219,8 +219,8 @@ def get_transforms(image_size=(256, 64), is_train=False):
                 position='center'
             ),
             A.CenterCrop(height=target_height, width=target_width),
-            # Grayscale-appropriate normalization (all channels identical after CLAHE)
-            A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
+            # Single channel grayscale normalization
+            A.Normalize(mean=(0.5,), std=(0.5,)),
             ToTensorV2(),
         ])
 def create_dataloaders(
@@ -298,6 +298,6 @@ if __name__ == "__main__":
     images, weights, filenames = next(iter(train_loader))
     
     print(f"\nBatch shapes after transforms:")
-    print(f"  Images: {images.shape}")  # should be [8, 3, 64, 256]
+    print(f"  Images: {images.shape}")  # should be [8, 1, 64, 256]
     print(f"  First 3 weights: {weights[:3]}")
     print(f"  First 3 filenames: {filenames[:3]}")

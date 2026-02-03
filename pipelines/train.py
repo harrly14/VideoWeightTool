@@ -439,7 +439,7 @@ def train_model(
 
     # Log model graph to Tensorboard
     try:
-        dummy_input = torch.zeros(1, 3, image_size[1], image_size[0]).to(device)
+        dummy_input = torch.zeros(1, 1, image_size[1], image_size[0]).to(device)
         writer.add_graph(model, dummy_input)
     except Exception as e:
         print(f"Warning: Failed to add graph to TensorBoard: {e}")

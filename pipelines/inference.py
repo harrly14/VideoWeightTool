@@ -163,14 +163,7 @@ def get_roi(frame, roi_coords=None):
         print(f"ROI error: {e}")
         return cv2.resize(frame, (256,64))
 
-def apply_clahe(frame):
-    """Apply CLAHE preprocessing to match training data pipeline."""
-    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    enhanced = clahe.apply(gray)
-    bgr_enhanced = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
-    return bgr_enhanced
+
 
 def preprocess_frame(frame, transform):
     """Preprocess frame for model input with CLAHE enhancement."""

@@ -5,7 +5,7 @@ This file defines the CNN+LSTM+CTC model that learns to read
 seven-segment displays from scale images.
 
 Architecture:
-    Input (3, 64, 256) image
+    Input (1, 64, 256) grayscale image
     CNN layers (extract visual features)
     LSTM layers (read features as sequence)
     Linear layer (predict characters)
@@ -38,10 +38,10 @@ class ScaleOCRModel(nn.Module):
         self.num_classes = num_chars + 1  
         
         # Part 1: CNN Feature Extractor
-        # Input: (batch, 3, 64, 256)
+        # Input: (batch, 1, 64, 256)
         # Goal: Extract visual features (edges, segments, shapes)
         
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, padding=1)
+        self.conv1 = nn.Conv2d(1, 64, kernel_size=3, padding=1)
         self.bn1 = nn.BatchNorm2d(64)
         self.pool1 = nn.MaxPool2d(2, 2)  # Reduces to (64, 32, 128)
         
@@ -98,7 +98,7 @@ class ScaleOCRModel(nn.Module):
         Forward pass through the network
         
         Args:
-            x: Input images (batch, 3, 64, 256)
+            x: Input images (batch, 1, 64, 256)
         
         Returns:
             log_probs: Log probabilities (seq_len, batch, num_classes)
@@ -108,7 +108,7 @@ class ScaleOCRModel(nn.Module):
         
         # CNN Feature Extraction
         
-        # Block 1: (batch, 3, 64, 256) -> (batch, 64, 32, 128)
+        # Block 1: (batch, 1, 64, 256) -> (batch, 64, 32, 128)
         x = self.conv1(x)
         x = self.bn1(x)
         x = F.relu(x)
@@ -316,7 +316,7 @@ if __name__ == "__main__":
     
     print("\nTesting forward pass...")
     batch_size = 4
-    dummy_input = torch.randn(batch_size, 3, 64, 256).to(device)
+    dummy_input = torch.randn(batch_size, 1, 64, 256).to(device)
     
     print(f"Input shape: {dummy_input.shape}")
     
