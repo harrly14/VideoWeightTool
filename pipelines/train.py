@@ -238,12 +238,12 @@ def log_visual_validation(writer, epoch, images, targets, predictions):
         return
 
     # vutils.make_grid expects BxCxHxW
-    img_grid = vutils.make_grid(images[:8], normalize=True)
+    img_grid = vutils.make_grid(images[:4], normalize=True)
     writer.add_image('Validation/Images', img_grid, epoch)
     
     # Create a text string for the first few samples
     text_log = "### Validation Samples\n\n| Index | Ground Truth | Prediction | Status |\n|:---:|:---:|:---:|:---:|\n"
-    for i in range(min(len(images), 8)):
+    for i in range(min(len(images), 4)):
         status = "Match" if targets[i] == predictions[i] else "Mismatch"
         # Escape pipes in text if any
         gt = str(targets[i]).replace('|', r'\|')
