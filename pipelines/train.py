@@ -649,7 +649,7 @@ def train_model(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Train Scale OCR Model')
     parser.add_argument('--batch-size', type=int, default=32, help='Batch size for training')
-    parser.add_argument('--epochs', type=int, default=400, help='Number of epochs')
+    parser.add_argument('--epochs', type=int, default=200, help='Number of epochs')
     parser.add_argument('--lr', type=float, default=0.00025, help='Learning rate')
     parser.add_argument('--data-dir', type=str, default='data', help='Directory containing data')
     parser.add_argument('--save-dir', type=str, default='data/models', help='Directory to save models')
