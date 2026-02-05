@@ -155,7 +155,7 @@ def menu_training():
 
         elif choice == '3':
             video_path = stylized_input("Video Path")
-            if not video_path: 
+            if not video_path or not os.path.exists(video_path):
                 print(f"{COLORS['RED']}Invalid choice. Please try again...{COLORS['ENDC']}")
                 input(f"\n{COLORS['DIM']}Press Enter to continue...{COLORS['ENDC']}")
                 continue
@@ -171,7 +171,7 @@ def menu_training():
             if conservative_run == 'y':
                 args.append("--conservative")
             
-            run_script("pipelines/inference.py", ["--video", args])
+            run_script("pipelines/inference.py", [args])
 
         elif choice == '0':
             break

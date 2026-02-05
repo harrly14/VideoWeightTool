@@ -180,12 +180,12 @@ def get_transforms(image_size=(256, 64), is_train=False):
             A.Affine(scale=(0.85, 1.15), 
                     translate_percent=0.05,
                     rotate=5,
-                    cval=0,
+                    fill=0,
                     p=0.3
             ),
                     
             A.RandomBrightnessContrast(brightness_limit=0.3, contrast_limit=0.3, p=0.7),
-            A.GaussNoise(var_limit=(10.0, 50.0), p=0.5),
+            A.GaussNoise(std_range=(0.02, 0.1), p=0.5),
             A.RandomGamma(gamma_limit=(80, 120), p=0.3),
             A.Sharpen(alpha=(0.2, 0.5), p=0.3),
 
@@ -195,7 +195,7 @@ def get_transforms(image_size=(256, 64), is_train=False):
                 min_height=target_height,
                 min_width=target_width,
                 border_mode=cv2.BORDER_CONSTANT,
-                fill=(0, 0, 0),
+                fill=0,
                 position='center'
             ),
             A.CenterCrop(height=target_height, width=target_width),
@@ -215,7 +215,7 @@ def get_transforms(image_size=(256, 64), is_train=False):
                 min_height=target_height,
                 min_width=target_width,
                 border_mode=cv2.BORDER_CONSTANT,
-                fill=(0, 0, 0),
+                fill=0,
                 position='center'
             ),
             A.CenterCrop(height=target_height, width=target_width),
@@ -229,9 +229,11 @@ def create_dataloaders(
     image_size: tuple = (256, 64),
     num_workers: int = 2,
     persistent_workers: bool = False,
-    prefetch_factor: int = 2
+    prefetch_factor: int = 2,
+    verbose: bool = True
 ):
-    print("Creating dataloaders...")
+    if verbose:
+        print("Creating dataloaders...")
 
     train_transform = get_transforms(image_size, is_train=True)
     val_transform = get_transforms(image_size, is_train=False)
@@ -249,12 +251,12 @@ def create_dataloaders(
     if not val_csv.exists():
         raise FileNotFoundError(f"Val labels CSV not found: {val_csv}")
 
-    train_dataset = ScaleOCRDataset(str(train_csv), images_dir=str(images_dir), transform=train_transform, validate=True)
-    val_dataset = ScaleOCRDataset(str(val_csv), images_dir=str(images_dir), transform=val_transform, validate=True)
+    train_dataset = ScaleOCRDataset(str(train_csv), images_dir=str(images_dir), transform=train_transform, validate=True, verbose=verbose)
+    val_dataset = ScaleOCRDataset(str(val_csv), images_dir=str(images_dir), transform=val_transform, validate=True, verbose=verbose)
 
     test_dataset = None
     if test_csv.exists():
-        test_dataset = ScaleOCRDataset(str(test_csv), images_dir=str(images_dir), transform=val_transform, validate=True)
+        test_dataset = ScaleOCRDataset(str(test_csv), images_dir=str(images_dir), transform=val_transform, validate=True, verbose=verbose)
 
     
     create_dataloader = partial(
@@ -273,12 +275,13 @@ def create_dataloaders(
     if test_dataset:
         test_loader = create_dataloader(test_dataset)
 
-    print(f"Dataloaders created:")
-    print(f"  Train: {len(train_loader)} batches ({len(train_dataset)} samples)")
-    print(f"  Val: {len(val_loader)} batches ({len(val_dataset)} samples)")
-    if test_loader:
-        test_samples = len(test_dataset) if test_dataset is not None else 0
-        print(f"  Test: {len(test_loader)} batches ({test_samples} samples)")
+    if verbose:
+        print(f"Dataloaders created:")
+        print(f"  Train: {len(train_loader)} batches ({len(train_dataset)} samples)")
+        print(f"  Val: {len(val_loader)} batches ({len(val_dataset)} samples)")
+        if test_loader:
+            test_samples = len(test_dataset) if test_dataset is not None else 0
+            print(f"  Test: {len(test_loader)} batches ({test_samples} samples)")
 
     return train_loader, val_loader, test_loader, train_dataset, val_dataset, test_dataset
 

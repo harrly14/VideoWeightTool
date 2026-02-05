@@ -76,10 +76,10 @@ class SignalHandler:
         signal.signal(signal.SIGINT, self._signal_handler)
 
     def _signal_handler(self, signal, frame):
-        print("\n\n" + "!" * 60)
-        print("RECEIVED SIGNAL INTERRUPT (Ctrl+C)")
-        print("Finishing current epoch and saving progress...")
-        print("!" * 60 + "\n")
+        print("\n\n" + "!" * 50)
+        print("INTERRUPT RECEIVED (Ctrl+C)")
+        print("Finishing current epoch and saving...")
+        print("!" * 50 + "\n")
         self.received_signal = True
 
 class CTCLabelEncoder:
@@ -100,7 +100,6 @@ class CTCLabelEncoder:
         return [self.char_to_idx[c] for c in text if c in self.char_to_idx]
     
     def encode_batch(self, texts):
-
         encoded = [self.encode(text) for text in texts]
         target_lengths = torch.LongTensor([len(enc) for enc in encoded])
         
@@ -132,18 +131,16 @@ def train_one_epoch(model, train_loader, criterion, optimizer, encoder, device, 
     # We need to pass this to the workers or handle it globally
     # For now, we rely on the global handler check in the main loop
     
-    model.train()  # Set to training mode
+    model.train()
     
     total_loss = 0
     num_batches = len(train_loader)
-    
-    print(f"\nEpoch {epoch} - Training")
-    print("-" * 60)
-    
     start_time = time.time()
     
     optimizer.zero_grad()
     
+    batch_wdith = len(str(num_batches))
+
     # We need to access the signal handler from the outer scope or pass it in
     # Since we didn't pass it, we'll check the module-level signal handler if possible
     # or just rely on the KeyboardInterrupt being caught in the main loop
@@ -204,7 +201,7 @@ def train_one_epoch(model, train_loader, criterion, optimizer, encoder, device, 
             elapsed = time.time() - start_time
             batches_per_sec = (batch_idx + 1) / elapsed
             
-            print(f"  Batch [{batch_idx+1}/{num_batches}] | "
+            print(f"  Batch [{batch_idx+1:>{batch_wdith}}/{num_batches}] | "
                   f"Loss: {loss.item() * accumulation_steps:.4f} | "
                   f"Avg Loss: {avg_loss_so_far:.4f} | "
                   f"Speed: {batches_per_sec:.2f} batch/s")
@@ -221,12 +218,6 @@ def train_one_epoch(model, train_loader, criterion, optimizer, encoder, device, 
         optimizer.zero_grad()
     
     avg_loss = total_loss / num_batches
-    epoch_time = time.time() - start_time
-    
-    print(f"\nEpoch {epoch} Training Complete:")
-    print(f"  Average Loss: {avg_loss:.4f}")
-    print(f"  Time: {epoch_time:.2f}s")
-    
     return avg_loss
 
 
@@ -245,10 +236,7 @@ def log_visual_validation(writer, epoch, images, targets, predictions):
     text_log = "### Validation Samples\n\n| Index | Ground Truth | Prediction | Status |\n|:---:|:---:|:---:|:---:|\n"
     for i in range(min(len(images), 4)):
         status = "Match" if targets[i] == predictions[i] else "Mismatch"
-        # Escape pipes in text if any
-        gt = str(targets[i]).replace('|', r'\|')
-        pred = str(predictions[i]).replace('|', r'\|')
-        text_log += f"| {i} | `{gt}` | `{pred}` | {status} |\n"
+        text_log += f"| `{targets[i]}` | `{predictions[i]}` | {status} |\n"
     
     writer.add_text('Validation/Predictions', text_log, epoch)
 
@@ -283,16 +271,13 @@ def validate(model, val_loader, criterion, encoder, device, epoch):
     Returns:
         avg_loss, char_accuracy, seq_accuracy, cer, wer, vis_images, vis_targets, vis_preds
     """
-    model.eval()  # Set to evaluation mode
+    model.eval()
     
     total_loss = 0
     
     all_predictions = []
     all_targets = []
     vis_images = None
-    
-    print(f"\nEpoch {epoch} - Validation")
-    print("-" * 60)
     
     with torch.no_grad():  # No gradient computation during validation
         for batch_idx, (images, weights, filenames) in enumerate(val_loader):
@@ -322,23 +307,20 @@ def validate(model, val_loader, criterion, encoder, device, epoch):
                 vis_images = images.cpu()
     
     avg_loss = total_loss / len(val_loader)
-    
     cer, wer = calculate_metrics(all_predictions, all_targets)
     seq_accuracy = (1 - wer) * 100
-    char_accuracy = (1 - cer) * 100
     
-    print(f"\nValidation Results:")
-    print(f"  Loss: {avg_loss:.4f}")
-    print(f"  CER: {cer:.4f} (Accuracy: {char_accuracy:.2f}%)")
-    print(f"  WER: {wer:.4f} (Accuracy: {seq_accuracy:.2f}%)")
+    print(f"  Valid: Loss: {avg_loss:.4f} | "
+          f"CER: {cer:.4f} | "
+          f"Acc: {seq_accuracy:.2f}%")
     
-    print(f"\nExample Predictions:")
-    num_examples = min(5, len(all_predictions))
+    print("  Samples:")
+    num_examples = min(4, len(all_predictions))
     for i in range(num_examples):
-        status = "Match" if all_predictions[i] == all_targets[i] else "Mismatch"
-        print(f"  {status} Pred: '{all_predictions[i]}' | Target: '{all_targets[i]}'")
+        status = "[Match]   " if all_predictions[i] == all_targets[i] else "[Mismatch]"
+        print(f"    {status} Pred: {all_predictions[i]:<10} | Tgt: {all_targets[i]}")
     
-    return avg_loss, char_accuracy, seq_accuracy, cer, wer, vis_images, all_targets[:8], all_predictions[:8]
+    return avg_loss, (1-cer)*100, seq_accuracy, cer, wer, vis_images, all_targets[:8], all_predictions[:8]
 
 
 def train_model(
@@ -392,23 +374,21 @@ def train_model(
         log_dir = f"runs/scale_ocr_{timestamp}"
 
     writer = SummaryWriter(log_dir=log_dir)
-    print(f"TensorBoard logging to: {log_dir}")
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"\n{'='*60}")
+    print(f"\n{'='*50}")
     print(f"TRAINING SCALE OCR MODEL")
-    print(f"{'='*60}")
-    print(f"Device: {device}")
-    print(f"Batch size: {batch_size}")
-    print(f"Learning rate: {learning_rate}")
-    print(f"Epochs: {num_epochs}")
-    print(f"Image size: {image_size}")
-    print(f"Data dir: {data_dir}")
-    print(f"Save dir: {save_dir}")
-    print(f"Seed: {seed}")
-    print(f"{'='*60}\n")
+    print(f"{'-'*50}")
+    print(f"  Device:       {device}")
+    print(f"  Data Dir:     {data_dir}")
+    print(f"  Batch:        {batch_size}")
+    print(f"  Epochs:       {num_epochs}")
+    print(f"  Learning Rate:{learning_rate}")
+    print(f"  FP16 Mode:    {use_amp}")
+    print(f"  Logging to:   {log_dir}")
+    print(f"{'='*50}\n")
     
-    print("Loading data...")
+    print("Loading data and model...")
     # Use number of CPUs for workers, but cap at 8 to avoid overhead
     num_workers = min(os.cpu_count() or 2, 8)
     
@@ -418,18 +398,12 @@ def train_model(
         image_size=image_size,
         num_workers=num_workers,
         persistent_workers=True,
-        prefetch_factor=2
+        prefetch_factor=2,
+        verbose=False
     )
-    
-    print(f"\nDataset sizes:")
-    print(f"  Train: {len(train_dataset)} samples")
-    print(f"  Val: {len(val_dataset)} samples")
-    if test_dataset:
-        print(f"  Test: {len(test_dataset)} samples")
 
     encoder = CTCLabelEncoder()
     
-    print("\nCreating model...")
     model = create_model(
         num_chars=len(encoder.char_to_idx),
         hidden_size=hidden_size,
@@ -448,8 +422,8 @@ def train_model(
         try:
             print("Attempting to compile model with torch.compile()...")
             model = torch.compile(model)
-        except Exception as e:
-            print(f"Warning: torch.compile() failed, continuing without compile: {e}")
+        except:
+            print(f"torch.compile() skipped.")
     
     criterion = nn.CTCLoss(blank=encoder.blank_label, zero_infinity=True)
     
@@ -496,158 +470,68 @@ def train_model(
 
         start_epoch = checkpoint['epoch'] + 1
         best_val_loss = checkpoint.get('best_val_loss', float('inf'))
-        print(f"Resumed from epoch {start_epoch}")
-    
-    history = {
-        'train_loss': [],
-        'val_loss': [],
-        'char_accuracy': [],
-        'seq_accuracy': [],
-        'cer': [],
-        'wer': [],
-        'learning_rate': []
-    }
-    
-    print(f"\n{'='*60}")
-    print(f"STARTING TRAINING")
-    print(f"{'='*60}\n")
+        
+    print(f"\nStarting training loop fo {num_epochs - start_epoch} epochs...")
     
     for epoch in range(start_epoch, num_epochs):
         if signal_handler.received_signal:
-            print("\nStopping training early due to signal interrupt.")
             break
 
-        print(f"\n{'='*60}")
-        print(f"Epoch {epoch+1}/{num_epochs}")
-        print(f"{'='*60}")
+        print(f"\nEpoch [{epoch+1}/{num_epochs}]")
         
-        try:
-            train_loss = train_one_epoch(
+
+        train_loss = train_one_epoch(
                 model, train_loader, criterion, optimizer, encoder, device, epoch+1,
                 scaler=scaler,
                 accumulation_steps=1, # change from 1 to 4 if hitting GPU memory limits
                 writer=writer
-            )
-        except (RuntimeError, KeyboardInterrupt):
-            if signal_handler.received_signal:
-                print("\nInterrupt caught during training loop.")
-                # We caught the worker crash, but we want to proceed to save
-                train_loss = 0 # Placeholder
-            else:
-                raise # Real error, re-raise it
+        )
         
         if signal_handler.received_signal:
-            print("\nInterrupt received. Skipping validation to save immediately.")
-        else:
-            val_results = validate(
-                model, val_loader, criterion, encoder, device, epoch+1
-            )
-            # Unpack validation results
-            val_loss, char_acc, seq_acc, cer, wer, v_imgs, v_targs, v_preds = val_results
+            break
 
-            writer.add_scalar('Loss/Train_Epoch', train_loss, epoch)
-            writer.add_scalar('Loss/Val_Epoch', val_loss, epoch)
-            writer.add_scalar('Accuracy/Character', char_acc, epoch)
-            writer.add_scalar('Accuracy/Sequence', seq_acc, epoch)
-            writer.add_scalar('Metric/CER', cer, epoch)
-            writer.add_scalar('Metric/WER', wer, epoch)
-            
-            # Visual validation
-            if v_imgs is not None:
-                log_visual_validation(writer, epoch, v_imgs, v_targs, v_preds)
+        val_results = validate(model, val_loader, criterion, encoder, device, epoch+1)
+        val_loss, char_acc, seq_acc, cer, wer, v_imgs, v_targs, v_preds = val_results
 
-            scheduler.step(val_loss)
-            current_lr = optimizer.param_groups[0]['lr']
-            writer.add_scalar('HyperParams/Learning_Rate', current_lr, epoch)
-            
-            history['train_loss'].append(train_loss)
-            history['val_loss'].append(val_loss)
-            history['char_accuracy'].append(char_acc)
-            history['seq_accuracy'].append(seq_acc)
-            history['cer'].append(cer)
-            history['wer'].append(wer)
-            history['learning_rate'].append(current_lr)
-            
-            final_metrics_hparams = {
-                'hparam/loss': val_loss,
-                'hparam/accuracy': seq_acc,
-                'hparam/cer': cer
-            }
+        writer.add_scalar('Loss/Train', train_loss, epoch)
+        writer.add_scalar('Loss/Val', val_loss, epoch)
+        writer.add_scalar('Metrics/Seq_Acc', seq_acc, epoch)
+        
+        # Visual validation
+        if v_imgs is not None:
+            log_visual_validation(writer, epoch, v_imgs, v_targs, v_preds)
+
+        scheduler.step(val_loss)
+        current_lr = optimizer.param_groups[0]['lr']
+        writer.add_scalar('HyperParams/Learning_Rate', current_lr, epoch)
         
         checkpoint = {
             'epoch': epoch,
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
-            'scheduler_state_dict': scheduler.state_dict(),
-            'train_loss': train_loss,
-            # Handle case where validation was skipped
-            'val_loss': val_loss if not signal_handler.received_signal else history['val_loss'][-1] if history['val_loss'] else 0,
-            'char_accuracy': char_acc if not signal_handler.received_signal else 0,
-            'seq_accuracy': seq_acc if not signal_handler.received_signal else 0,
+            'val_loss': val_loss,
             'best_val_loss': best_val_loss,
-            'history': history,
-            # Save char_map for reproducibility - ensures decoder matches training
-            'char_map': getattr(model, 'char_map', None) or getattr(model, '_orig_mod', model).char_map if hasattr(model, '_orig_mod') else None,
         }
         
         torch.save(checkpoint, save_path / 'latest_model.pth')
         
-        if not signal_handler.received_signal:
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
-                torch.save(checkpoint, save_path / 'best_model.pth')
-                print(f"\nSaved new best model (val_loss: {val_loss:.4f})")
-            
-            if seq_acc > best_seq_accuracy:
-                best_seq_accuracy = seq_acc
-                torch.save(checkpoint, save_path / 'best_accuracy_model.pth')
-                print(f"Saved best accuracy model (seq_acc: {seq_acc:.2f}%)")
-            
-            if (epoch + 1) % 10 == 0:
-                torch.save(checkpoint, save_path / f'checkpoint_epoch_{epoch+1}.pth')
-                print(f"Saved checkpoint at epoch {epoch+1}")
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            torch.save(checkpoint, save_path / 'best_model.pth')
+            print(f"\nSaved new best model (val_loss: {val_loss:.4f})")
         
-        # Final check to break loop
-        if signal_handler.received_signal:
-            print("\nTraining stopped gracefully. Progress saved.")
-            break
-            
-    # Add hyperparameters
-    hparams = {
-        'lr': learning_rate,
-        'batch_size': batch_size,
-        'image_size': str(image_size),
-        'hidden_size': hidden_size,
-        'num_lstm_layers': num_lstm_layers,
-        'optimizer': 'Adam',
-        'run_name': run_name if run_name else 'default'
-    }
-    if final_metrics_hparams:
-        writer.add_hparams(hparams, final_metrics_hparams)
+        if seq_acc > best_seq_accuracy:
+            best_seq_accuracy = seq_acc
+            torch.save(checkpoint, save_path / 'best_accuracy_model.pth')
+            print(f"Saved best accuracy model (seq_acc: {seq_acc:.2f}%)")
     
     writer.close()
-
-    with open(save_path / 'training_history.json', 'w') as f:
-        # Helper to convert numpy/tensor types for JSON
-        def default(obj):
-            if hasattr(obj, 'item'): return obj.item()
-            if isinstance(obj, np.integer): return int(obj)
-            if isinstance(obj, np.floating): return float(obj)
-            raise TypeError
-        json.dump(history, f, indent=2, default=default)
-    
-    print(f"\n{'='*60}")
-    print(f"TRAINING COMPLETE")
-    print(f"{'='*60}")
-    print(f"Best validation loss: {best_val_loss:.4f}")
-    print(f"Best sequence accuracy: {best_seq_accuracy:.2f}%")
-    print(f"Models saved to: {save_path}")
-    print(f"{'='*60}\n")
+    print(f"\nTraining complete. Best sequence accuracy: {best_seq_accuracy:.2f}%")
     
     return model, history, encoder, criterion, device, test_loader
 
 if __name__ == "__main__":
-    parser = argparse.ArfgumentParser(description='Train Scale OCR Model')
+    parser = argparse.ArgumentParser(description='Train Scale OCR Model')
     parser.add_argument('--batch-size', type=int, default=32, help='Batch size for training')
     parser.add_argument('--epochs', type=int, default=200, help='Number of epochs')
     parser.add_argument('--lr', type=float, default=0.00025, help='Learning rate')
@@ -674,31 +558,3 @@ if __name__ == "__main__":
         seed=args.seed,
         run_name=args.run_name
     )
-
-    checkpoint_path = Path(args.save_dir) / 'best_model.pth'
-    if checkpoint_path.exists():
-        checkpoint = torch.load(checkpoint_path, map_location=device)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        model.to(device)
-        model.eval()
-
-        test_epoch = len(history.get('val_loss', []))
-        val_results = validate(
-            model, test_loader, criterion, label_encoder, device, test_epoch
-        )
-        # Unpack first 5 values
-        test_loss, test_char_acc, test_seq_acc, test_cer, test_wer = val_results[:5]
-
-        print(f"\n{'='*60}")
-        print(f"FINAL TEST SET RESULTS")
-        print(f"{'='*60}")
-        print(f"Test Loss: {test_loss:.4f}")
-        print(f"Character Accuracy: {test_char_acc:.2f}%")
-        print(f"Sequence Accuracy: {test_seq_acc:.2f}%")
-        print(f"CER: {test_cer:.4f}")
-        print(f"WER: {test_wer:.4f}")
-    
-    print("\nTraining finished! Next steps:")
-    print(f"1. Check {args.save_dir} folder for saved models")
-    print("2. Best model is saved as 'best_model.pth'")
-    print("3. Use this model for inference on new videos")
