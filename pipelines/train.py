@@ -647,7 +647,7 @@ def train_model(
     return model, history, encoder, criterion, device, test_loader
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Train Scale OCR Model')
+    parser = argparse.ArfgumentParser(description='Train Scale OCR Model')
     parser.add_argument('--batch-size', type=int, default=32, help='Batch size for training')
     parser.add_argument('--epochs', type=int, default=200, help='Number of epochs')
     parser.add_argument('--lr', type=float, default=0.00025, help='Learning rate')
