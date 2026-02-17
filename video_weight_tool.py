@@ -61,7 +61,7 @@ def run_script(path, args=[]):
         return
     
     cmd = [sys.executable, full_path] + args
-    print(f"{COLORS['BLUE']}Running: {' '.join(cmd)}{COLORS['ENDC']}")
+    # print(f"{COLORS['BLUE']}Running: {' '.join(cmd)}{COLORS['ENDC']}")
 
     time.sleep(1)
 
@@ -170,8 +170,8 @@ def menu_training():
                     
             if conservative_run == 'y':
                 args.append("--conservative")
-            
-            run_script("pipelines/inference.py", [args])
+
+            run_script("pipelines/inference.py", args)
 
         elif choice == '0':
             break

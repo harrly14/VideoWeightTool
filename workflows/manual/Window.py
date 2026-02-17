@@ -247,6 +247,14 @@ class EditWindow(QWidget):
         contrast_group.setLayout(contrast_layout)
         controls_layout.addWidget(contrast_group)
 
+        self.clahe_button = QPushButton("CLAHE: Off")
+        self.clahe_button.setToolTip("Toggle CLAHE (Contrast Limited Adaptive Histogram Equalization) preview")
+        self.clahe_button.setCheckable(True)
+        self.clahe_button.setChecked(False)
+        self.clahe_button.toggled.connect(self._update_clahe_button_text)
+        self.clahe_button.clicked.connect(self.update_display_frame)
+        controls_layout.addWidget(self.clahe_button)
+
         frame_info_group = QGroupBox("Frame info")
         frame_info_layout = QVBoxLayout()
 
@@ -289,6 +297,19 @@ class EditWindow(QWidget):
         except ValueError as e:
             QMessageBox.warning(self, "Invalid parameter", str(e))
             setattr(self.video_params, param_name, old_val)
+
+    def _update_clahe_button_text(self, checked):
+        if checked:
+            self.clahe_button.setText("CLAHE: On")
+        else:
+            self.clahe_button.setText("CLAHE: Off")
+
+    def apply_clahe(self, frame):
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        enhanced = clahe.apply(gray)
+        bgr_enhanced = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
+        return bgr_enhanced
 
     def reset_slider(self, param_name):
         default_val = self.video_params.get_default_value(param_name)
@@ -419,7 +440,11 @@ class EditWindow(QWidget):
             self.video_label.setText("No frame loaded")
             return
         
-        preview_frame = self.apply_preview_effects(self.current_raw_frame)
+        frame = self.current_raw_frame
+        if self.clahe_button.isChecked():
+            frame = self.apply_clahe(frame)
+        
+        preview_frame = self.apply_preview_effects(frame)
 
         if self.video_params.crop_coords:
             x, y, w, h = self.video_params.crop_coords
