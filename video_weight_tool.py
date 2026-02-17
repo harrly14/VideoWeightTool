@@ -131,8 +131,9 @@ def menu_training():
         print_header("Model Training & Inference", breadcrumb)
 
         print("1. Train New Model")
-        print("2. Evaluate training results")
-        print("3. Run Inference on Video")
+        print("2. Run Validation Set Evaluation")
+        print("3. Run Final Test Set Audit")
+        print("4. Run Inference on Video")
         print(ELEMENTS['SEPARATOR'])
         print("0. Back to Main Menu")
         print()
@@ -151,9 +152,13 @@ def menu_training():
             run_script("pipelines/train.py", ["--epochs", str(epochs_val)])
 
         elif choice == '2':
-                    run_script("pipelines/evaluate.py")
+            run_script("pipelines/evaluate.py")
 
         elif choice == '3':
+            print(f"{COLORS['BLUE']}Performing final audit on independent test set...{COLORS['ENDC']}")
+            run_script("pipelines/evaluate.py", ["--test"])
+
+        elif choice == '4':
             video_path = stylized_input("Video Path")
             if not video_path or not os.path.exists(video_path):
                 print(f"{COLORS['RED']}Invalid choice. Please try again...{COLORS['ENDC']}")

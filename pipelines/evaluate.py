@@ -33,7 +33,7 @@ def should_flag(prediction, confidence, entropy, conf_thresh, ent_thresh):
     Check if a prediction should be flagged based on format and quality metrics.
     Does NOT check for sequential jumps as this is single-image evaluation.
     """
-    pattern = re.compile(r'^\d+\.\d{3}$')
+    pattern = re.compile(r'^\d\.\d{3}$')
     
     if not pattern.match(prediction):
         return True, 'bad_format'
@@ -191,7 +191,8 @@ def evaluate(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Evaluate Scale OCR Model")
     parser.add_argument('--model', type=str, default='data/models/best_model.pth', help='Path to model checkpoint')
-    parser.add_argument('--labels', type=str, default='data/labels/val_labels.csv', help='Path to labels CSV')
+    parser.add_argument('--labels', type=str, default='None', help='Path to labels CSV')
+    parser.add_argument('--test', action='store_true', help='Evaluate on the test set')
     parser.add_argument('--images', type=str, default='data/images', help='Path to images directory')
     
     default_out = f"data/outputs/val_eval_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
@@ -204,5 +205,14 @@ if __name__ == '__main__':
     parser.add_argument('--entropy-threshold', type=float, default=FILTER_ENT_THRESH, help='Flagging entropy threshold')
 
     args = parser.parse_args()
+
+    if args.labels is None:
+        if args.test:
+            args.labels = 'data/labels/test_labels.csv'
+        else:
+            args.labels = 'data/labels/val_labels.csv'
     
+    set_name = "test" if args.test else "val"
+    args.output = f"data/outputs/{set_name}_eval_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+
     evaluate(args)
