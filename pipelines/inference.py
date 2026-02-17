@@ -306,6 +306,8 @@ def process_video_streaming_batched(video_path, model, transform, roi_sections, 
     print(f"Processing {frames_to_process} frames (batch_size={batch_size})...")
     print(f"{'='*60}")
     
+    no_roi_frames = []  # Track frames with no ROI coverage
+    
     with tqdm(total=frames_to_process, desc="Processing frames", unit="frame", 
               initial=0, dynamic_ncols=True) as pbar:
         while frame_num <= range_end:
@@ -315,6 +317,23 @@ def process_video_streaming_batched(video_path, model, transform, roi_sections, 
             
             # Get the correct ROI for this frame
             roi_coords = get_roi_for_frame(frame_num, roi_sections)
+            
+            if roi_coords is None:
+                # No ROI for this frame — emit placeholder, skip inference
+                timestamp = frame_num / fps if fps > 0 else frame_num
+                results.append({
+                    'frame_num': frame_num,
+                    'timestamp': timestamp,
+                    'raw_weight': None,
+                    'confidence': 0.0,
+                    'entropy': 0.0,
+                    'no_roi': True,
+                })
+                no_roi_frames.append(frame_num)
+                pbar.update(1)
+                frame_num += 1
+                continue
+            
             cropped = get_roi(frame, roi_coords)
             
             tensor = preprocess_frame(cropped, transform)
@@ -360,6 +379,9 @@ def process_video_streaming_batched(video_path, model, transform, roi_sections, 
     
     cap.release()
     
+    if no_roi_frames:
+        print(f"\n  {len(no_roi_frames)} frames had no ROI coverage and were skipped (will be flagged as 'no_roi')")
+    
     if checkpoint_path and checkpoint_every > 0:
         save_checkpoint(checkpoint_path, results, frame_num)
     
@@ -378,6 +400,7 @@ FLAG_REASONS = {
     'jump': 'Physical jump',
     'parse_error': 'Parse error',
     'low_nonblank': 'Too few non-blank tokens',
+    'no_roi': 'No ROI coverage for frame',
 }
 
 def robust_filter_pipeline(results, conf_thresh=FILTER_CONF_THRESH, ent_thresh=FILTER_ENT_THRESH, jump_thresh=FILTER_JUMP_THRESH):
@@ -389,6 +412,12 @@ def robust_filter_pipeline(results, conf_thresh=FILTER_CONF_THRESH, ent_thresh=F
     last_valid = None
     
     for r in results:
+        # Frames with no ROI coverage are pre-flagged — pass through immediately
+        if r.get('no_roi', False):
+            filtered_weights.append(None)
+            flag_reasons.append('no_roi')
+            continue
+        
         pred = r.get('raw_weight', '')
         conf = r.get('confidence', 0.0)
         ent = r.get('entropy', float('inf'))
