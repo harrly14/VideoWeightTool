@@ -179,9 +179,21 @@ class VideoSectionsManager(QDialog):
             (start, end) tuple or None if fully covered
         """
         uncovered = self._get_uncovered_ranges()
-        if uncovered:
+        if not uncovered:
+            return None
+        
+        if not self.sections:
             return uncovered[0]
-        return None
+        
+        latest_end = max(s['end_frame'] for s in self.sections)
+        
+        # Return the first uncovered range that starts after the latest section
+        for start, end in uncovered:
+            if start > latest_end:
+                return (start, end)
+        
+        # Fall back to first uncovered range
+        return uncovered[0]
     
     def _get_total_covered_frames(self) -> int:
         """Get total number of covered frames."""
