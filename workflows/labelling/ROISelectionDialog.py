@@ -16,6 +16,7 @@ from PyQt5.QtCore import Qt, QTimer, QEvent, QObject
 from qtrangeslider import QRangeSlider
 
 from core.ui.ROICropLabel import ROICropLabel, CNN_WIDTH, CNN_HEIGHT
+from core.roi_utils import warp_roi_to_canvas, apply_clahe as _apply_clahe
 
 
 class ROISelectionDialog(QDialog):
@@ -298,11 +299,7 @@ class ROISelectionDialog(QDialog):
             self.preview_button.setText("CLAHE: Off")
 
     def apply_clahe(self, frame):
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        enhanced = clahe.apply(gray)
-        bgr_enhanced = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
-        return bgr_enhanced
+        return _apply_clahe(frame)
 
     def update_display_frame(self):
         if self.current_raw_frame is None:
@@ -527,17 +524,9 @@ class ROISelectionDialog(QDialog):
             if getattr(self, 'preview_button', None) and self.preview_button.isChecked():
                 frame_to_warp = self.apply_clahe(frame_to_warp)
 
-            pts = np.array(self.roi_points, dtype=np.float32)
-            dst_pts = np.array([
-                [0, 0], 
-                [CNN_WIDTH - 1, 0], 
-                [CNN_WIDTH - 1, CNN_HEIGHT - 1], 
-                [0, CNN_HEIGHT - 1]
-            ], dtype=np.float32)
-            M = cv2.getPerspectiveTransform(pts, dst_pts)
-            warped = cv2.warpPerspective(frame_to_warp, M, (CNN_WIDTH, CNN_HEIGHT))
-            
-            rgb_preview = cv2.cvtColor(warped, cv2.COLOR_BGR2RGB)
+            canvas = warp_roi_to_canvas(frame_to_warp, self.roi_points, CNN_WIDTH, CNN_HEIGHT)
+
+            rgb_preview = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
             h, w, c = rgb_preview.shape
             qimage = QImage(rgb_preview.data, w, h, c * w, QImage.Format_RGB888)
             self.preview_label.setPixmap(QPixmap.fromImage(qimage))

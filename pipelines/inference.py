@@ -49,28 +49,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 from core.model import create_model
 from core.dataset import get_transforms
-
-def get_roi_for_frame(frame_num, roi_sections):
-    """
-    Find the correct ROI for a given frame number from a list of sections.
-    
-    Args:
-        frame_num: The frame number to look up
-        roi_sections: List of section dicts with 'quad', 'start_frame', 'end_frame'
-    
-    Returns:
-        ROI quad coordinates list, or None if frame not covered
-    """
-    if not roi_sections:
-        return None
-    
-    for section in roi_sections:
-        start = section.get('start_frame', 0)
-        end = section.get('end_frame', float('inf'))
-        if start <= frame_num <= end:
-            return section.get('quad')
-    
-    return None  # Frame not covered by any section
+from core.config import CNN_WIDTH, CNN_HEIGHT
+from core.roi_utils import get_roi_for_frame, warp_roi_to_canvas
 
 
 def load_model(model_path, device):
@@ -132,36 +112,7 @@ def get_video_metadata(video_path):
     return metadata
 
 def get_roi(frame, roi_coords=None):
-    if not roi_coords:
-        return cv2.resize(frame, (256,64)) # fall back
-    try:
-        pts = np.array(roi_coords, dtype="float32")
-
-        width = max(np.linalg.norm(pts[1] - pts[0]), np.linalg.norm(pts[2] - pts[3]))
-        height = max(np.linalg.norm(pts[3] - pts[0]), np.linalg.norm(pts[2] - pts[1]))
-        aspect_ratio = width / height
-
-        target_height = 64
-        target_width = 256
-        new_height = target_height
-        new_width = int(aspect_ratio * new_height)
-
-        dst_pts = np.float32([[0,0], [new_width - 1, 0], [new_width - 1, new_height - 1], [0, new_height - 1]]) # -1 because its 0 indexed
-        M = cv2.getPerspectiveTransform(pts, dst_pts)
-        warped = cv2.warpPerspective(frame, M, (new_width, new_height), flags=cv2.INTER_LINEAR)
-
-        #center on black canvas
-        canvas = np.zeros((target_height, target_width, 3), dtype=np.uint8)
-        if new_width > target_width: # unlikely case where its super wide
-            warped = cv2.resize(warped, (target_width, target_height))
-            new_width = target_width
-        x_offset = (target_width - new_width) // 2
-        canvas[:, x_offset:x_offset + new_width] = warped
-
-        return canvas
-    except Exception as e:
-        print(f"ROI error: {e}")
-        return cv2.resize(frame, (256,64))
+    return warp_roi_to_canvas(frame, roi_coords, CNN_WIDTH, CNN_HEIGHT)
 
 
 
@@ -842,7 +793,7 @@ def main():
             print(f"   Error parsing data/valid_video_sections.json: {e}")
             return 1
     
-    transform = get_transforms(image_size=(256, 64), is_train=False)
+    transform = get_transforms(is_train=False)
     
     try:
         results, checkpoint_path = process_video_streaming_batched(

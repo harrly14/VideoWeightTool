@@ -18,6 +18,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 from core.dataset import create_dataloaders
 from core.model import create_model
+from core.config import CHAR_MAP, NUM_CHARS, HIDDEN_SIZE, NUM_LSTM_LAYERS, IMAGE_SIZE
 
 """
 Scale OCR Training Script
@@ -94,13 +95,9 @@ class CTCLabelEncoder:
     Handles conversion between strings like "7.535" and tensor indices
     """
     def __init__(self):
-        self.char_to_idx = {
-            '0': 0, '1': 1, '2': 2, '3': 3, '4': 4,
-            '5': 5, '6': 6, '7': 7, '8': 8, '9': 9,
-            '.': 10
-        }
-        self.idx_to_char = {v: k for k, v in self.char_to_idx.items()}
-        self.blank_label = 11
+        self.char_to_idx = {v: k for k, v in CHAR_MAP.items()}
+        self.idx_to_char = dict(CHAR_MAP)
+        self.blank_label = NUM_CHARS  # CTC blank is always last class
     
     def encode(self, text):
         return [self.char_to_idx[c] for c in text if c in self.char_to_idx]
@@ -333,9 +330,9 @@ def train_model(
     batch_size=16,
     num_epochs=50,
     learning_rate=0.001,
-    hidden_size=256,
-    num_lstm_layers=2,
-    image_size=(256, 64),
+    hidden_size=HIDDEN_SIZE,
+    num_lstm_layers=NUM_LSTM_LAYERS,
+    image_size=IMAGE_SIZE,
     save_dir='data/models',
     data_dir='data',
     resume_from=None,
@@ -556,9 +553,6 @@ if __name__ == "__main__":
         batch_size=args.batch_size,
         num_epochs=args.epochs,
         learning_rate=args.lr,
-        hidden_size=256,
-        num_lstm_layers=2,
-        image_size=(256, 64),
         save_dir=args.save_dir,
         data_dir=args.data_dir,
         resume_from=args.resume,

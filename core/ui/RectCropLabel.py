@@ -2,9 +2,7 @@ from PyQt5.QtGui import QPainter, QPen, QColor
 from PyQt5.QtWidgets import QLabel, QMessageBox
 from PyQt5.QtCore import Qt, pyqtSignal
 
-
-CNN_WIDTH = 256
-CNN_HEIGHT = 64
+from core.config import CNN_WIDTH, CNN_HEIGHT
 
 class RectCropLabel(QLabel): 
     crop_selected = pyqtSignal(int, int, int, int)

@@ -20,9 +20,11 @@ def apply_clahe_grayscale(image: np.ndarray, **kwargs) -> np.ndarray:
     Pipeline: RGB -> Grayscale -> CLAHE -> single channel output
     Returns: (H, W, 1) grayscale image for single-channel model input
     """
+    from core.config import CLAHE_CLIP_LIMIT, CLAHE_GRID_SIZE
+
     grayscale_image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
     
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    clahe = cv2.createCLAHE(clipLimit=CLAHE_CLIP_LIMIT, tileGridSize=CLAHE_GRID_SIZE)
     enhanced = clahe.apply(grayscale_image)
     
     # Return as (H, W, 1) for albumentations compatibility
@@ -166,7 +168,10 @@ class ScaleOCRDataset(Dataset):
             image = transformed['image']
 
         return image, weight_formatted, filename
-def get_transforms(image_size=(256, 64), is_train=False):
+def get_transforms(image_size=None, is_train=False):
+    from core.config import IMAGE_SIZE
+    if image_size is None:
+        image_size = IMAGE_SIZE
     target_width, target_height = image_size
     
     if is_train:
@@ -226,12 +231,16 @@ def get_transforms(image_size=(256, 64), is_train=False):
 def create_dataloaders(
     data_dir: str,
     batch_size: int = 16,
-    image_size: tuple = (256, 64),
+    image_size: tuple = None,
     num_workers: int = 2,
     persistent_workers: bool = False,
     prefetch_factor: int = 2,
     verbose: bool = True
 ):
+    if image_size is None:
+        from core.config import IMAGE_SIZE
+        image_size = IMAGE_SIZE
+
     if verbose:
         print("Creating dataloaders...")
 
@@ -295,7 +304,6 @@ if __name__ == "__main__":
     train_loader, val_loader, test_loader, _, _, _ = create_dataloaders(
         data_dir="data",
         batch_size=8,
-        image_size=(256, 64)
     )
     
     images, weights, filenames = next(iter(train_loader))

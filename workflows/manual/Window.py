@@ -305,11 +305,8 @@ class EditWindow(QWidget):
             self.clahe_button.setText("CLAHE: Off")
 
     def apply_clahe(self, frame):
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        enhanced = clahe.apply(gray)
-        bgr_enhanced = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
-        return bgr_enhanced
+        from core.roi_utils import apply_clahe
+        return apply_clahe(frame)
 
     def reset_slider(self, param_name):
         default_val = self.video_params.get_default_value(param_name)

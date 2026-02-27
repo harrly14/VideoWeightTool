@@ -1,7 +1,19 @@
+CNN_WIDTH = 192
+CNN_HEIGHT = 128
+IMAGE_SIZE = (CNN_WIDTH, CNN_HEIGHT)   # used by transforms
+
+NUM_CHARS = 11          # digits 0-9 + decimal point
+HIDDEN_SIZE = 256
+NUM_LSTM_LAYERS = 2
+
 # Character map for CTC decoding (digits 0-9 and decimal point)
 # Index 11 is reserved for CTC blank token
 CHAR_MAP = {i: str(i) for i in range(10)}
 CHAR_MAP[10] = '.'
+
+# CLAHE parameters used in dataset transforms & UI previews
+CLAHE_CLIP_LIMIT = 2.0
+CLAHE_GRID_SIZE = (8, 8)
 
 # Minimum non-blank token count for reliable confidence
 MIN_NONBLANK_COUNT = 3

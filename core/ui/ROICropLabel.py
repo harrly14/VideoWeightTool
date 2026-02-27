@@ -12,9 +12,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtGui import QPixmap, QImage, QPainter, QPen, QColor, QPolygon, QBrush
 from PyQt5.QtCore import Qt, QPoint, pyqtSignal, QTimer
 
-
-CNN_WIDTH = 256
-CNN_HEIGHT = 64
+from core.config import CNN_WIDTH, CNN_HEIGHT
 
 
 class ROICropLabel(QLabel):

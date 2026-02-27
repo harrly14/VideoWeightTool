@@ -8,30 +8,11 @@ import pandas as pd
 from pathlib import Path
 from typing import Optional, List, Dict
 
-CNN_WIDTH = 256
-CNN_HEIGHT = 64
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
 
-def get_roi_for_frame(frame_num: int, roi_sections: List[Dict]) -> Optional[List[List[int]]]:
-    """
-    Find the correct ROI for a given frame number from a list of sections.
-    
-    Args:
-        frame_num: The frame number to look up
-        roi_sections: List of section dicts with 'quad', 'start_frame', 'end_frame'
-    
-    Returns:
-        ROI quad coordinates list [[x,y],...], or None if frame not covered
-    """
-    if not roi_sections:
-        return None
-    
-    for section in roi_sections:
-        start = section.get('start_frame', 0)
-        end = section.get('end_frame', float('inf'))
-        if start <= frame_num <= end:
-            return section.get('quad')
-    
-    return None
+from core.config import CNN_WIDTH, CNN_HEIGHT
+from core.roi_utils import get_roi_for_frame
 
 def extract_frames_for_video(video_path: Path, frames: List[int], roi_sections: List[Dict], output_folder: Path, video_name: str):
     print(f"Starting extraction for {video_name}...")

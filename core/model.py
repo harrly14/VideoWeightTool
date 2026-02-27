@@ -5,7 +5,7 @@ This file defines the CNN+LSTM+CTC model that learns to read
 seven-segment displays from scale images.
 
 Architecture:
-    Input (1, 64, 256) grayscale image
+    Input (1, CNN_HEIGHT, CNN_WIDTH) grayscale image
     CNN layers (extract visual features)
     LSTM layers (read features as sequence)
     Linear layer (predict characters)
@@ -17,11 +17,20 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from core.config import CHAR_MAP
+from core.config import CHAR_MAP, CNN_WIDTH, CNN_HEIGHT, NUM_CHARS, HIDDEN_SIZE, NUM_LSTM_LAYERS
 
 
 class ScaleOCRModel(nn.Module):
-    def __init__(self, num_chars=11, hidden_size=256, num_lstm_layers=2, char_map=None):
+    # Derived CNN output dimensions — computed once from config constants.
+    # Pool1 (2,2) and Pool2 (2,2) halve both dimensionss
+    # Pool4 and Pool6 are (2,1)so they halve height only.  
+    # Net effect:
+    #   seq_len  = CNN_WIDTH  // 4          (two (2,2) width halvings)
+    #   feat_h   = CNN_HEIGHT // 16         (two (2,2) + two (2,1) height halvings)
+    SEQ_LEN = CNN_WIDTH // 4
+    FEAT_H  = CNN_HEIGHT // 16
+
+    def __init__(self, num_chars=NUM_CHARS, hidden_size=HIDDEN_SIZE, num_lstm_layers=NUM_LSTM_LAYERS, char_map=None):
         super(ScaleOCRModel, self).__init__()
         
         self.num_chars = num_chars
@@ -38,42 +47,43 @@ class ScaleOCRModel(nn.Module):
         self.num_classes = num_chars + 1  
         
         # Part 1: CNN Feature Extractor
-        # Input: (batch, 1, 64, 256)
+        # Input: (batch, 1, CNN_HEIGHT, CNN_WIDTH)  e.g. (batch, 1, 128, 192)
         # Goal: Extract visual features (edges, segments, shapes)
         
         self.conv1 = nn.Conv2d(1, 64, kernel_size=3, padding=1)
         self.bn1 = nn.BatchNorm2d(64)
-        self.pool1 = nn.MaxPool2d(2, 2)  # Reduces to (64, 32, 128)
+        self.pool1 = nn.MaxPool2d(2, 2)  # (64, H/2, W/2)
         
         self.conv2 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
         self.bn2 = nn.BatchNorm2d(128)
-        self.pool2 = nn.MaxPool2d(2, 2)  # Reduces to (128, 16, 64)
+        self.pool2 = nn.MaxPool2d(2, 2)  # (128, H/4, W/4)
         
         self.conv3 = nn.Conv2d(128, 256, kernel_size=3, padding=1)
         self.bn3 = nn.BatchNorm2d(256)
         
         self.conv4 = nn.Conv2d(256, 256, kernel_size=3, padding=1)
         self.bn4 = nn.BatchNorm2d(256)
-        self.pool4 = nn.MaxPool2d((2, 1))  # Reduces height only: (256, 8, 64)
+        self.pool4 = nn.MaxPool2d((2, 1))  # Height only: (256, H/8, W/4)
         
         self.conv5 = nn.Conv2d(256, 512, kernel_size=3, padding=1)
         self.bn5 = nn.BatchNorm2d(512)
         
         self.conv6 = nn.Conv2d(512, 512, kernel_size=3, padding=1)
         self.bn6 = nn.BatchNorm2d(512)
-        self.pool6 = nn.MaxPool2d((2, 1))  # Reduces height only: (512, 4, 64)
+        self.pool6 = nn.MaxPool2d((2, 1))  # Height only: (512, H/16, W/4)
         
-        # After all conv layers: (batch, 512, 4, 64)
-        # We'll reshape this to (batch, 64, 512*4) = (batch, 64, 2048)
-        # The 64 becomes our sequence length (time steps)
-        
+        # After all conv layers: (batch, 512, FEAT_H, SEQ_LEN)
+        # Reshape to (batch, SEQ_LEN, 512 * FEAT_H)
+        # SEQ_LEN becomes the time-step axis for the LSTM.
+
+        lstm_input_size = 512 * self.FEAT_H
 
         # Part 2: LSTM Sequence Reader
-        # Input: (batch, seq_len=64, features=2048)
+        # Input: (batch, SEQ_LEN, lstm_input_size)
         # Goal: Read the sequence and understand digit order
         
         self.lstm = nn.LSTM(
-            input_size=512 * 4,  # 2048 features per time step
+            input_size=lstm_input_size,
             hidden_size=hidden_size,
             num_layers=num_lstm_layers,
             bidirectional=True,  # Read both forward and backward
@@ -85,7 +95,7 @@ class ScaleOCRModel(nn.Module):
         lstm_output_size = hidden_size * 2
         
         # Part 3: Classification Head
-        # Input: (batch, seq_len=64, lstm_output_size)
+        # Input: (batch, SEQ_LEN, lstm_output_size)
         # Goal: Predict character probabilities at each time step
         
         self.fc = nn.Linear(lstm_output_size, self.num_classes)
@@ -98,83 +108,72 @@ class ScaleOCRModel(nn.Module):
         Forward pass through the network
         
         Args:
-            x: Input images (batch, 1, 64, 256)
+            x: Input images (batch, 1, CNN_HEIGHT, CNN_WIDTH)
         
         Returns:
-            log_probs: Log probabilities (seq_len, batch, num_classes)
-            output_lengths: Length of each sequence (all same: seq_len)
+            log_probs: Log probabilities (SEQ_LEN, batch, num_classes)
+            output_lengths: Length of each sequence (all same: SEQ_LEN)
         """
         batch_size = x.size(0)
         
         # CNN Feature Extraction
         
-        # Block 1: (batch, 1, 64, 256) -> (batch, 64, 32, 128)
+        # Block 1
         x = self.conv1(x)
         x = self.bn1(x)
         x = F.relu(x)
         x = self.pool1(x)
         
-        # Block 2: (batch, 64, 32, 128) -> (batch, 128, 16, 64)
+        # Block 2
         x = self.conv2(x)
         x = self.bn2(x)
         x = F.relu(x)
         x = self.pool2(x)
         
-        # Block 3: (batch, 128, 16, 64) -> (batch, 256, 16, 64)
+        # Block 3
         x = self.conv3(x)
         x = self.bn3(x)
         x = F.relu(x)
         
-        # Block 4: (batch, 256, 16, 64) -> (batch, 256, 8, 64)
+        # Block 4
         x = self.conv4(x)
         x = self.bn4(x)
         x = F.relu(x)
         x = self.pool4(x)
         
-        # Block 5: (batch, 256, 8, 64) -> (batch, 512, 8, 64)
+        # Block 5
         x = self.conv5(x)
         x = self.bn5(x)
         x = F.relu(x)
         
-        # Block 6: (batch, 512, 8, 64) -> (batch, 512, 4, 64)
+        # Block 6
         x = self.conv6(x)
         x = self.bn6(x)
         x = F.relu(x)
         x = self.pool6(x)
         
-        # Current shape: (batch, 512, 4, 64)
+        # Current shape: (batch, 512, FEAT_H, SEQ_LEN)
         
         # Reshape for LSTM
-        # We want (batch, seq_len, features)
-        # Treat width (64) as sequence length
-        # Flatten height and channels into features: 512 * 4 = 2048
+        # We want (batch, SEQ_LEN, features)
+        # Treat width (SEQ_LEN) as sequence length
+        # Flatten height and channels into features: 512 * FEAT_H
         
-        # Permute to (batch, 64, 4, 512)
-        x = x.permute(0, 3, 2, 1)
-        
-        # Reshape to (batch, 64, 2048)
-        x = x.reshape(batch_size, 64, -1)
+        x = x.permute(0, 3, 2, 1)       # (batch, SEQ_LEN, FEAT_H, 512)
+        x = x.reshape(batch_size, self.SEQ_LEN, -1)  # (batch, SEQ_LEN, 512*FEAT_H)
         
         # LSTM Sequence Processing
-        # Input: (batch, seq_len=64, features=2048)
-        # Output: (batch, seq_len=64, hidden_size*2)
-        
         x, _ = self.lstm(x)
         
         # Apply dropout
         x = self.dropout(x)
         
         # Classification
-        # Input: (batch, seq_len=64, hidden_size*2)
-        # Output: (batch, seq_len=64, num_classes=12)
-        
         x = self.fc(x)
         
         # Prepare for CTC Loss
         # CTC expects: (seq_len, batch, num_classes)
-        # So we need to permute
-        
-        x = x.permute(1, 0, 2)  # (seq_len=64, batch, num_classes=12)
+        x = x.permute(1, 0, 2)  # (SEQ_LEN, batch, num_classes)
         
         # CTC expects log probabilities
         log_probs = F.log_softmax(x, dim=2)
@@ -182,7 +181,7 @@ class ScaleOCRModel(nn.Module):
         # Output lengths (all sequences have same length after CNN)
         output_lengths = torch.full(
             size=(batch_size,),
-            fill_value=64,  # seq_len
+            fill_value=self.SEQ_LEN,
             dtype=torch.long,
             device=x.device
         )
@@ -270,14 +269,14 @@ class ScaleOCRModel(nn.Module):
             return "0.000"
 
 
-def create_model(num_chars=11, hidden_size=256, num_lstm_layers=2, device='cpu', char_map=None):
+def create_model(num_chars=NUM_CHARS, hidden_size=HIDDEN_SIZE, num_lstm_layers=NUM_LSTM_LAYERS, device='cpu', char_map=None):
     """
     Factory function to create and initialize the model
     
     Args:
-        num_chars: Number of unique characters (default: 11)
-        hidden_size: LSTM hidden size (default: 256)
-        num_lstm_layers: Number of LSTM layers (default: 2)
+        num_chars: Number of unique characters (default: NUM_CHARS from config)
+        hidden_size: LSTM hidden size (default: HIDDEN_SIZE from config)
+        num_lstm_layers: Number of LSTM layers (default: NUM_LSTM_LAYERS from config)
         device: Device to put model on ('cpu' or 'cuda')
         char_map: Optional character map (index -> char). If None, uses CHAR_MAP from config.
     
@@ -316,14 +315,15 @@ if __name__ == "__main__":
     
     print("\nTesting forward pass...")
     batch_size = 4
-    dummy_input = torch.randn(batch_size, 1, 64, 256).to(device)
+    dummy_input = torch.randn(batch_size, 1, CNN_HEIGHT, CNN_WIDTH).to(device)
     
     print(f"Input shape: {dummy_input.shape}")
     
     log_probs, output_lengths = model(dummy_input)
     
-    print(f"Output log_probs shape: {log_probs.shape}")  # Should be (64, 4, 12)
-    print(f"Output lengths: {output_lengths}")  # Should be [64, 64, 64, 64]
+    seq_len = ScaleOCRModel.SEQ_LEN
+    print(f"Output log_probs shape: {log_probs.shape}")  # Should be (SEQ_LEN, 4, 12)
+    print(f"Output lengths: {output_lengths}")  # Should be [SEQ_LEN]*4
     
     # Test decoding without limits
     print("\nTesting decoding (no limits)...")

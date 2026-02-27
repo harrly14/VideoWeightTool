@@ -78,7 +78,7 @@ def evaluate(args):
         return
 
 
-    transforms = get_transforms(image_size=(256, 64), is_train=False)
+    transforms = get_transforms(is_train=False)
     
     try:
         dataset = ScaleOCRDataset(
