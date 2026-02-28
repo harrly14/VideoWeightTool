@@ -9,7 +9,7 @@ Flags:
         --video PATH           Path to input video file (required)
         --output PATH          Path to output CSV file (default: <video>_weights.csv)
         --model PATH           Path to trained model (default: data/models/best_accuracy_model.pth)
-        --roi X1,Y1,...,X4,Y4  ROI as 8 comma-separated quad points (auto-loaded from data/valid_video_sections.json if not provided)
+        --roi X1,Y1,...,X4,Y4  ROI as 8 comma-separated quad points (auto-loaded from data/metadata.json if not provided)
         --save-video           Create annotated output video with weight overlay
 
     Processing:
@@ -669,9 +669,7 @@ def load_checkpoint(checkpoint_path):
         print(f"  Warning: Could not load checkpoint: {e}")
         return [], 0
 
-# ============================================================
 # MAIN WORKFLOW
-# ============================================================
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Scale OCR Video Processing Script",
@@ -690,7 +688,7 @@ Examples:
     parser.add_argument('--video', type=str, help='Path to input video file')
     parser.add_argument('--output', type=str, help='Path to output CSV file (default: video_name_weights.csv)')
     parser.add_argument('--model', type=str, default='data/models/best_accuracy_model.pth', help='Path to trained model')
-    parser.add_argument('--roi', type=str, help='ROI as quad points: x1,y1,x2,y2,x3,y3,x4,y4 (auto-loaded from data/valid_video_sections.json if not provided)')
+    parser.add_argument('--roi', type=str, help='ROI as quad points: x1,y1,x2,y2,x3,y3,x4,y4 (auto-loaded from data/metadata.json if not provided)')
     parser.add_argument('--batch-size', type=int, default=8, help='Batch size for inference')
     parser.add_argument('--checkpoint-every', type=int, default=0, help='Save checkpoint every N frames (0 to disable)')
     parser.add_argument('--resume', action='store_true', help='Resume from last checkpoint')
@@ -766,10 +764,10 @@ def main():
             print(f"Error parsing --roi: {e}")
             return 1
     else:
-        print("\nNo ROI specified. Loading from data/valid_video_sections.json...")
+        print("\nNo ROI specified. Loading from data/metadata.json...")
         video_name = os.path.basename(args.video)
         try:
-            with open('data/valid_video_sections.json', 'r') as f:
+            with open('data/metadata.json', 'r') as f:
                 data = json.load(f)
             if 'rois' in data and video_name in data['rois']:
                 video_data = data['rois'][video_name]
@@ -782,15 +780,15 @@ def main():
                     print(f"   No 'sections' data found for {video_name}")
                     return 1
             else:
-                print(f"   No ROI found for {video_name} in data/valid_video_sections.json")
+                print(f"   No ROI found for {video_name} in data/metadata.json")
                 print("   Please provide --roi argument or add ROI to the JSON file.")
                 return 1
         except FileNotFoundError:
-            print("   data/valid_video_sections.json not found.")
+            print("   data/metadata.json not found.")
             print("   Run `python workflows/labelling/main.py` to create it, or provide --roi argument.")
             return 1
         except json.JSONDecodeError as e:
-            print(f"   Error parsing data/valid_video_sections.json: {e}")
+            print(f"   Error parsing data/metadata.json: {e}")
             return 1
     
     transform = get_transforms(is_train=False)

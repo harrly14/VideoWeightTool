@@ -13,6 +13,9 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt
 
 from workflows.labelling.ROISelectionDialog import ROISelectionDialog
+from workflows.labelling.DividerDialog import DividerDialog
+from core.roi_utils import warp_roi_to_canvas, apply_clahe
+from core.config import CNN_WIDTH, CNN_HEIGHT
 
 
 class VideoSectionsManager(QDialog):
@@ -24,6 +27,7 @@ class VideoSectionsManager(QDialog):
     def __init__(self, video_capture, video_filename: str, 
                  total_frames: int,
                  default_roi: Optional[List[Tuple[int, int]]] = None,
+                 default_dividers: Optional[List[int]] = None,
                  parent=None):
         """
         Initialize video sections manager.
@@ -33,6 +37,7 @@ class VideoSectionsManager(QDialog):
             video_filename: Name of video file for display
             total_frames: Total number of frames in video
             default_roi: Previous ROI to use as default for first section
+            default_dividers: Previous divider positions for carryover
             parent: Parent widget
         """
         super().__init__(parent)
@@ -41,11 +46,12 @@ class VideoSectionsManager(QDialog):
         self.total_frames = total_frames
         self.default_roi = default_roi
         
-        # List of defined sections: [{'quad': [...], 'start_frame': int, 'end_frame': int}, ...]
+        # List of defined sections: [{'quad': [...], 'start_frame': int, 'end_frame': int, 'dividers': [...]}, ...]
         self.sections: List[Dict] = []
         
-        # Track the last ROI for carryover to next section
+        # Track the last ROI and dividers for carryover to next section
         self.last_roi = default_roi
+        self.last_dividers = default_dividers
         
         self.setWindowTitle(f"Define ROI Sections - {video_filename}")
         self.setMinimumSize(500, 400)
@@ -280,6 +286,26 @@ class VideoSectionsManager(QDialog):
         if dialog.exec_() == QDialog.Accepted:
             section = dialog.get_section()
             if section:
+                # create warped CLAHE image for divider placement
+                raw_frame = dialog.current_raw_frame
+                roi_quad = section['quad']
+                if raw_frame is not None and roi_quad:
+                    warped = warp_roi_to_canvas(raw_frame, roi_quad, CNN_WIDTH, CNN_HEIGHT)
+                    clahe_warped = apply_clahe(warped)
+                    
+                    divider_dialog = DividerDialog(
+                        clahe_warped,
+                        default_dividers=self.last_dividers,
+                        parent=self
+                    )
+                    
+                    if divider_dialog.exec_() != QDialog.Accepted:
+                        # User cancelled dividers — cancel the whole section
+                        return
+                    
+                    section['dividers'] = divider_dialog.get_dividers()
+                    self.last_dividers = section['dividers']
+                
                 self.sections.append(section)
                 self.last_roi = section['quad']  # Carryover for next section
                 self._update_display()
@@ -328,16 +354,16 @@ class VideoSectionsManager(QDialog):
     
     def get_sections(self) -> List[Dict]:
         """
-        Get all defined sections.
-        
         Returns:
             List of section dicts with 'quad', 'start_frame', 'end_frame'
         """
         return self.sections
     
     def get_last_roi(self) -> Optional[List[Tuple[int, int]]]:
-        """Get the last used ROI for carryover to next video."""
         return self.last_roi
+    
+    def get_last_dividers(self) -> Optional[List[int]]:
+        return self.last_dividers
     
     def get_covered_frame_ranges(self) -> List[Tuple[int, int]]:
         """

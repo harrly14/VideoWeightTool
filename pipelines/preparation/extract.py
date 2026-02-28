@@ -12,7 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.config import CNN_WIDTH, CNN_HEIGHT
-from core.roi_utils import get_roi_for_frame
+from core.roi_utils import get_roi_for_frame, warp_roi_to_canvas
 
 def extract_frames_for_video(video_path: Path, frames: List[int], roi_sections: List[Dict], output_folder: Path, video_name: str):
     print(f"Starting extraction for {video_name}...")
@@ -32,9 +32,6 @@ def extract_frames_for_video(video_path: Path, frames: List[int], roi_sections: 
             skipped_no_roi += 1
             continue
         
-        # Quad is [[x,y], [x,y], [x,y], [x,y]]
-        pts = [(int(p[0]), int(p[1])) for p in quad]
-        
         cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
         ret, frame = cap.read()
         if not ret:
@@ -42,10 +39,7 @@ def extract_frames_for_video(video_path: Path, frames: List[int], roi_sections: 
             continue
 
         try:
-            src_pts = np.float32(pts)
-            dst_pts = np.float32([[0, 0], [CNN_WIDTH, 0], [CNN_WIDTH, CNN_HEIGHT], [0, CNN_HEIGHT]])
-            M = cv2.getPerspectiveTransform(src_pts, dst_pts)
-            warped = cv2.warpPerspective(frame, M, (CNN_WIDTH, CNN_HEIGHT), flags=cv2.INTER_LINEAR)
+            warped = warp_roi_to_canvas(frame, quad, CNN_WIDTH, CNN_HEIGHT)
         except Exception as e:
             print(f"Warning: Could not warp quad ROI for frame {frame_num}: {e}. Skipping frame.")
             continue
@@ -65,7 +59,7 @@ def main():
     parser.add_argument('--csv', '-c', default='data/all_data.csv', help='Path to labels CSV')
     parser.add_argument('--video_dir', '-v', default='data/raw_videos', help='Directory containing video files')
     parser.add_argument('--output_dir', '-o', default='data/images/', help='Output directory for images')
-    parser.add_argument('--roi_file', '-r', default='data/valid_video_sections.json', help='Path to JSON file containing ROI information')
+    parser.add_argument('--roi_file', '-r', default='data/metadata.json', help='Path to JSON file containing ROI information')
     
     args = parser.parse_args()
     

@@ -87,7 +87,7 @@ python workflows/labelling/main.py
 
 This updates:
 - `data/labels/all_data.csv`
-- `data/valid_video_sections.json`
+- `data/metadata.json`
 
 ### 2. Prepare Dataset
 

@@ -5,11 +5,10 @@ Allows user to define both a quad ROI and its applicable frame range.
 
 import cv2
 import json
-import numpy as np
 from typing import Optional, List, Tuple, Dict
 from PyQt5.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QGroupBox, QMessageBox, QSlider, QSpinBox, QFrame, QSizePolicy
+    QGroupBox, QMessageBox, QSpinBox, QSizePolicy
 )
 from PyQt5.QtGui import QPixmap, QImage
 from PyQt5.QtCore import Qt, QTimer, QEvent, QObject

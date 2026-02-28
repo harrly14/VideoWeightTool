@@ -10,7 +10,7 @@ from VideoSectionsManager import VideoSectionsManager
 from LabellingWindow import LabellingWindow, VideoCompleteDialog
 from PyQt5.QtWidgets import QApplication, QMessageBox
 
-VIDEO_SECTIONS_JSON_PATH = Path("data/valid_video_sections.json")
+VIDEO_SECTIONS_JSON_PATH = Path("data/metadata.json")
 
 
 class BatchManager:
@@ -36,6 +36,7 @@ class BatchManager:
         
         self.video_sections: dict = {}
         self.last_roi: Optional[List[Tuple[int, int]]] = None  # For ROI carryover
+        self.last_dividers: Optional[List[int]] = None  # For divider carryover
         
         self._load_video_sections()
         
@@ -97,9 +98,10 @@ class BatchManager:
             self.video_sections["rois"][filename] = {
                 "sections": [
                     {
-                        "quad": s['quad'],
                         "start_frame": s['start_frame'],
-                        "end_frame": s['end_frame']
+                        "end_frame": s['end_frame'],
+                        "quad": s['quad'],
+                        "dividers": s.get('dividers', [])
                     }
                     for s in sections
                 ]
@@ -221,7 +223,8 @@ class BatchManager:
             # Stage 1: Video Sections Manager (combined ROI + frame range selection)
             sections_manager = VideoSectionsManager(
                 video, filename, total_frames,
-                default_roi=self.last_roi  # Carryover from previous video
+                default_roi=self.last_roi,  # Carryover roi
+                default_dividers=self.last_dividers  # Carryover dividers
             )
             
             if sections_manager.exec_() != VideoSectionsManager.Accepted: # User cancelled section selection
@@ -229,7 +232,8 @@ class BatchManager:
             
             sections = sections_manager.get_sections()
             covered_ranges = sections_manager.get_covered_frame_ranges()
-            self.last_roi = sections_manager.get_last_roi()  # Save for carryover to next video
+            self.last_roi = sections_manager.get_last_roi()  # Save for roi carryover to next video
+            self.last_dividers = sections_manager.get_last_dividers()  # Save dividers for carryover
             
             if not sections or not covered_ranges:
                 return None, VideoCompleteDialog.EXIT_BATCH, None, None

@@ -149,7 +149,7 @@ def main():
             None,
             "Confirm",
             header
-            + (f"Video sections will be saved to:\ndata/valid_video_sections.json\n\n" if rois_only else f"Output will be saved to:\n{csv_path}\n\n")
+            + (f"Video sections will be saved to:\ndata/metadata.json\n\n" if rois_only else f"Output will be saved to:\n{csv_path}\n\n")
             + "Continue?",
             QMessageBox.Ok | QMessageBox.Cancel,
             QMessageBox.Ok
@@ -161,7 +161,7 @@ def main():
         processed = manager.process_batch(queue)
         
         if rois_only:
-            success_message = f"Successfully processed {processed} video(s).\n\nVideo sections saved to:\ndata/valid_video_sections.json"
+            success_message = f"Successfully processed {processed} video(s).\n\nVideo sections saved to:\ndata/metadata.json"
         else:
             success_message = f"Successfully processed {processed} video(s).\n\nResults saved to:\n{csv_path}"
         
