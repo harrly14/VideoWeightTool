@@ -458,7 +458,8 @@ if __name__ == "__main__":
 
     handle_flagged(df, flagged, output_path)
 
-    dfs = split_data(df)
+    train_df, val_df, test_df = split_data(df)
+    dfs = [train_df, val_df, test_df]
     balance_classes(dfs)
 
     print(f"Train: {len(train_df)} ({len(train_df)/n:.1%})")
