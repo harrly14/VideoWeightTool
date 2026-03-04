@@ -1,75 +1,388 @@
 import pandas as pd
-import sys
 import numpy as np
+import sys
+import re
 from pathlib import Path
 from sklearn.model_selection import train_test_split
 
-def check_duplicates(df):
+def check_duplicates(df, n):
     duplicates = df[df.duplicated(subset=['filename', 'frame_number'], keep=False)]
     if not duplicates.empty:
-        print(f"Found {len(duplicates)} duplicate rows:")
+        display_rows = n
+        print(f"Found {len(flagged)} duplicate rows")
+        print(f"Printing the first {display_rows}:")
         print("-" * 40)
-        print(duplicates.sort_values(by=['filename', 'frame_number']).to_string(index=False))
+        print(flagged.sort_values(by=['filename', 'frame_number']).head(display_rows).to_string(index=False))
         print("-" * 40)
-        return duplicates
+        return flagged
     return None
 
-def check_erratic_fluctuations(df, threshold):
-    # the idea: 
-    # Group by filename, sort each group by frame_num, then compute the absolute diff between 
-    # consecutive label values. Flag any row where the jump exceeds threshold. Worth noting: 
-    # the first frame of a video should be exempt since there's no prior frame to compare against — 
-    # you don't want cross-video diffs leaking in either, so grouping strictly by filename before diffing is important.
+def check_erratic_fluctuations(df, threshold=0.4, n):
+    df.sort_values(by=['filename', 'frame_number'], inplace=True)
+    df['abs_diff'] = df.groupby('filename')['weight'].diff().abs()
 
-    # Use df.groupby('filename')['weight'].diff().abs(). 
-    # Don't forget to fill the NaN at the start of each group with 0 so you don't accidentally flag the first frame of every video.
+    flagged = df[df['abs_diff'].notna() & (df['abs_diff'] >= threshold)].copy()
 
-def validate_format(df, min_val, max_val):
-    # two checks: regex match for X.XXX format 
-    # and a configurable range check (e.g. [min_val, max_val] passed as args or set in a config).
-    # Both checks should tag rows with a specific reason so the user knows what they're fixing.
+    if not flagged.empty:
+        display_rows = n
+        print(f"Found {len(flagged)} rows with erratic fluctuations")
+        print(f"Printing the first {display_rows}:")
+        print("-" * 40)
+        print(flagged.sort_values(by=['filename', 'frame_number']).head(display_rows).to_string(index=False))
+        print("-" * 40)
+        return flagged
+    return None
 
-def handle_flagged(flagged_df):
-    # After all three validation checks run, collect all flagged rows into one unified df (with a reason column), then prompt:
-    # "Flagged X rows. How would you like to proceed?"
-    # 1. Fix interactively (step through each row in CLI)
-    # 2. Print summary and exit
-    # 3. Export flagged_rows.csv and exit
-    # For option 1, show the row, the reason it was flagged, and let the user type a corrected value or skip it. 
-    # Skipped rows get dropped from the df before splitting. 
-    # After interactive fixing, re-run validation to confirm no new issues were introduced.
+def validate_format(df, min_val=6, max_val=8, n):
+    pattern = re.compile(r'^\d\.\d{3}$')
+    flagged =  df[~df['filename'].str.contains(pattern) &
+                   ~(df['value'].between(min_val, max_val))]
+    
+    if not flagged.empty:
+        display_rows = n
+        print(f"Found {len(flagged)} rows with an invalid format (or out weight out of range)")
+        print(f"Printing the first {display_rows}:")
+        print("-" * 40)
+        print(flagged.sort_values(by=['filename', 'frame_number']).head(display_rows).to_string(index=False))
+        print("-" * 40)
+        return flagged
+    return None
 
-    # add a "Bulk Auto-Fix" option for fluctuations.
-    # The Logic: If a weight jumps from 7.450 -> 7.850 -> 7.451, 
-    # it is almost certainly a single-frame glitch. 
-    # You could offer to automatically interpolate (average) that middle frame based on its neighbors rather than making the user type it in manually.
+def _handle_duplicate(df, flagged_df, row):
+    fname, fnum = row['filename'], row['frame_number']
+    dupes = df[(df['filename'] == fname) & (df['frame_number'] == fnum)]
 
-def split_data(df, train=0.75, val=0.125, test=0.125, waste_threshold=0.10)
+    print(f"\n{'=' * 50}")
+    print(f"DUPLICATE: filename={fname}, frame_number={fnum}")
+    print(f"{'=' * 50}")
+
+    dupe_indices = dupes.index.tolist()
+    for i, (idx, r) in enumerate(dupes.iterrows(), 1):
+        print(f"  [{i}] index={idx}  weight={r['weight']}")
+
+    print("\nOptions:")
+    print(f" 1-{len(dupes)}: Keep that row, drop the others")
+    print(" t: Type a custom weight (keep first row, drop rest)")
+    print(" f: Change frame numbers to resolve conflict")
+
+    choice = input("Choice: ").strip().lower()
+
+    if choice == 't':
+        val = input("Enter weight value: ").strip()
+        try:
+            weight = float(val)
+        except ValueError:
+            print("Invalid number. Skipping this group.")
+            return df, flagged_df
+        keep_idx = dupe_indices[0]
+        df.at[keep_idx, 'weight'] = weight
+        drop_indices = dupe_indices[1:]
+        df = df.drop(index=drop_indices)
+    elif choice == 'f':
+        print("Enter new frame number for each row (blank = keep current):")
+        for i, (idx, r) in enumerate(dupes.iterrows(), 1):
+            new_fn = input(f"  [{i}] frame_number={int(r['frame_number'])}: ").strip()
+            if new_fn:
+                try:
+                    df.at[idx, 'frame_number'] = int(new_fn)
+                except ValueError:
+                    print(f"    Invalid number, keeping {int(r['frame_number'])}")
+    else:
+        try:
+            pick = int(choice)
+            if 1 <= pick <= len(dupe_indices):
+                keep_idx = dupe_indices[pick - 1]
+                drop_indices = [i for i in dupe_indices if i != keep_idx]
+                df = df.drop(index=drop_indices)
+            else:
+                print("Out of range. Skipping this group.")
+                return df, flagged_df
+        except ValueError:
+            print("Invalid input. Skipping this group.")
+            return df, flagged_df
+
+    # Remove all flagged entries for this duplicate group
+    flagged_df = flagged_df[
+        ~((flagged_df['filename'] == fname) & (flagged_df['frame_number'] == fnum))
+    ]
+    return df, flagged_df
+
+
+def _handle_fluctuation(df, flagged_df, row):
+    fname, fnum = row['filename'], row['frame_number']
+    match = df[(df['filename'] == fname) & (df['frame_number'] == fnum)]
+    if match.empty:
+        flagged_df = flagged_df[
+            ~((flagged_df['filename'] == fname) & (flagged_df['frame_number'] == fnum))
+        ]
+        return df, flagged_df
+
+    row_idx = match.index[0]
+
+    # Show surrounding context from the same video
+    video_df = df[df['filename'] == fname].sort_values('frame_number')
+    video_indices = video_df.index.tolist()
+    pos = video_indices.index(row_idx)
+    start = max(0, pos - 3)
+    end = min(len(video_indices), pos + 4)
+    context_indices = video_indices[start:end]
+
+    print(f"\n{'=' * 50}")
+    print(f"FLUCTUATION: filename={fname}, frame_number={fnum}, weight={row['weight']}")
+    print(f"{'=' * 50}")
+    print("Surrounding rows:")
+    for ci in context_indices:
+        marker = " >>>" if ci == row_idx else "    "
+        r = df.loc[ci]
+        print(f"{marker} frame={int(r['frame_number'])}  weight={r['weight']}")
+
+    # Compute interpolated value from neighbours
+    prev_idx = video_indices[pos - 1] if pos > 0 else None
+    next_idx = video_indices[pos + 1] if pos < len(video_indices) - 1 else None
+    if prev_idx is not None and next_idx is not None:
+        avg = (df.at[prev_idx, 'weight'] + df.at[next_idx, 'weight']) / 2
+    elif prev_idx is not None:
+        avg = df.at[prev_idx, 'weight']
+    else:
+        avg = df.at[next_idx, 'weight'] if next_idx is not None else None
+
+    print("\nOptions:")
+    print("  k: Keep / unflag")
+    if avg is not None:
+        print(f"  i: Interpolate (replace with {avg:.3f})")
+    print("  t: Type a custom weight")
+    print("  d: Drop this row")
+
+    choice = input("Choice: ").strip().lower()
+
+    if choice == 'k':
+        pass
+    elif choice == 'i' and avg is not None:
+        df.at[row_idx, 'weight'] = round(avg, 3)
+    elif choice == 't':
+        val = input("Enter weight value: ").strip()
+        try:
+            df.at[row_idx, 'weight'] = float(val)
+        except ValueError:
+            print("Invalid number. Skipping.")
+            return df, flagged_df
+    elif choice == 'd':
+        df = df.drop(index=row_idx)
+    else:
+        print("Invalid input. Skipping.")
+        return df, flagged_df
+
+    flagged_df = flagged_df[
+        ~((flagged_df['filename'] == fname) & (flagged_df['frame_number'] == fnum))
+    ]
+    return df, flagged_df
+
+
+def _handle_invalid_format(df, flagged_df, row):
+    fname, fnum = row['filename'], row['frame_number']
+    match = df[(df['filename'] == fname) & (df['frame_number'] == fnum)]
+    if match.empty:
+        flagged_df = flagged_df[
+            ~((flagged_df['filename'] == fname) & (flagged_df['frame_number'] == fnum))
+        ]
+        return df, flagged_df
+
+    row_idx = match.index[0]
+
+    print(f"\n{'=' * 50}")
+    print(f"INVALID FORMAT: filename={fname}, frame_number={fnum}, weight={df.at[row_idx, 'weight']}")
+    print(f"{'=' * 50}")
+    print("\nOptions:")
+    print("  t: Type a corrected weight")
+    print("  d: Drop this row")
+    print("  k: Keep / unflag")
+
+    choice = input("Choice: ").strip().lower()
+
+    if choice == 't':
+        val = input("Enter weight value: ").strip()
+        try:
+            df.at[row_idx, 'weight'] = float(val)
+        except ValueError:
+            print("Invalid number. Skipping.")
+            return df, flagged_df
+    elif choice == 'd':
+        df = df.drop(index=row_idx)
+    elif choice == 'k':
+        pass
+    else:
+        print("Invalid input. Skipping.")
+        return df, flagged_df
+
+    flagged_df = flagged_df[
+        ~((flagged_df['filename'] == fname) & (flagged_df['frame_number'] == fnum))
+    ]
+    return df, flagged_df
+
+
+def handle_flagged(df,flagged_df, output_path):
+    print(f"Flagged {len(flagged_df)} rows. How would you like to proceed?")
+    print("1. Fix interactively (step through each row in CLI)")
+    print("2. Print summary and exit")
+    print("3. Export flagged_rows.csv and exit")
+
+    choice = input("Select option: ").strip()
+
+    if choice == '1':
+        while not flagged_df.empty:
+            row = flagged_df.iloc[0]
+            reason = row['flag_reason']
+            remaining = len(flagged_df)
+            print(f"\n[{remaining} flagged row(s) remaining]")
+
+            if reason == 'duplicate':
+                df, flagged_df = _handle_duplicate(df, flagged_df, row)
+            elif reason == 'large fluctuation':
+                df, flagged_df = _handle_fluctuation(df, flagged_df, row)
+            elif reason == 'invalid format/out of range':
+                df, flagged_df = _handle_invalid_format(df, flagged_df, row)
+            else:
+                print(f"Unknown flag reason: {reason}. Removing from flagged list.")
+                flagged_df = flagged_df.iloc[1:]
+
+        print("\nAll flagged rows resolved.")
+
+    elif choice == '2':
+        print("\n")
+        print("-" * 40)
+        print(flagged.sort_values(by=['filename', 'frame_number']).to_string(index=False))
+        print("-" * 40)
+        print("\n")
+        sys.exit()
+    elif choice == '3':
+        filename = output_path / 'flagged_rows.csv'
+        flagged_df.to_csv(filename, index=False)
+        print(f"Saved splits to {filename}")
+        sys.exit()
+    else:
+        print("Invalid choice. Please try again.")
+        input("Press Enter to continue...")
+
+def split_data(df, train=0.75, val=0.125, test=0.125, waste_threshold=0.10):
+    """
+    Split a labelled frame DataFrame into train, validation, and test sets,
+    keeping all frames from the same video in the same split to avoid data leakage.
+
+    Uses a two-phase greedy algorithm to get as close to the target ratios as
+    possible while minimising discarded frames:
+
+      Phase 1: largest-first, whole videos only.
+        Videos are sorted by frame count descending and assigned whole to
+        whichever split has the largest remaining deficit, provided the video
+        fits within that split's remaining budget. The scan restarts after each
+        successful assignment so no valid placement is missed.
+
+      Phase 2: smallest-first, trim to fit.
+        Videos that were too large to fit whole into any remaining budget slot
+        are sorted ascending and used to top up each split. A video is trimmed
+        to exactly the frames needed; the leftover tail is discarded. Working
+        smallest-first ensures the trimmed tail is as small as possible.
+
+    If the percentage of unused frames is larger than the waste threshold,
+    recommend_labeling() is triggered to help get closer to target splits.
+    """
     print("Attempting to split data...")
     print(f"Target splits: {train*100}% train, {val*100}% validation, {test*100}% test")
-    print("To avoid ")
-    # Group by filename so whole videos are never split across sets. 
-    df = df.groupby(by='filename')
-    # Assign each video as a unit to train/val/test. 
-    # Because video lengths vary, perfect ratios are unlikely
-    # so, sort videos by frame count descending, assign each to whichever split is furthest below its target).
-    # After the initial assignment, compute actual vs. target ratios and the percentage of total frames 
-    # that ended up unassigned (if any). If wasted frames exceed waste_threshold, trigger recommend_labeling().
-    # Before the final assignment, check if swapping two similar-sized videos between 
-    # Val and Test brings you closer to the 12.5% target. This is much better than "wasting" data by leaving frames unassigned.
-    
-    # unique_videos = df['filename'].unique()
-    # # Shuffle the videos, not the dataframe rows
-    # np.random.seed(42)
-    # np.random.shuffle(unique_videos)
 
-    # handle the actual split
-    train_df = df.iloc[:n_train]
-    val_df = df.iloc[n_train:n_train+n_val]
-    test_df = df.iloc[n_train+n_val:]
+    groups = df.groupby(by='filename')
+    video_sizes = groups.size().reset_index(name='frame_count')
+    video_sizes = video_sizes.sort_values('frame_count', ascending=False).reset_index(drop=True)
+
+    total_frames = video_sizes['frame_count'].sum()
+    split_targets = {
+        'train': round(train * total_frames),
+        'val':   round(val * total_frames),
+        'test':  round(test * total_frames),
+    }
+    remaining_budget = split_targets.copy()
+
+    # each entry in buckets is (filename, frame_number). 
+    # if frame_number=None, it means take the whole video
+    buckets = {'train': [], 'val': [], 'test': []} 
+
+    # =========== Phase 1 (largest-first) ===========
+    unassigned = video_sizes.sort_values('frame_count', ascending=False).copy()
+
+    still_fitting = True
+    while still_fitting:
+        still_fitting = False
+        used_indices = []
+
+        for i, row in unassigned.iterrows():
+            filename, frame_count = row['filename'], row['frame_count']
+
+            # find the split with the biggest deficit that can fit this video
+            eligible = {}
+            for s in remaining_budget:
+                if remaining_budget[s] >= frame_count:
+                    eligible[s] = remaining_budget[s]
+            if not eligible:
+                continue # video is too big for any split
+                
+            best_split = max(eligible, key=eligible.get)
+            buckets[best_split].append((filename, None))
+            remaining_budget[best_split] -= frame_count
+            used_indices.append(i)
+            still_fitting = True
+
+        unassigned = unassigned.drop(index=used_indices)
+            
+    # =========== Phase 2 (smallest-first) ===========
+    unassigned = video_sizes.sort_values('frame_count', ascending=False).copy()
+
+    for split in ('train', 'val', 'test'):
+        for i, row in unassigned.iterrows():
+            if remaining_budget[split] <= 0: break
+
+            filename, frame_count = row['filename'], row['frame_count']
+            take = min(frame_count, remaining_budget[split])
+            if take == frame_count: n_taken_frames = None
+            else: n_taken_frames = take
+            buckets[split].append((filename, n_taken_frames))
+            remaining_budget[split] -= take
+
+    # =========== processing n stuff ===========
+    assigned_counts = {}
+    for s in split_targets:
+        assigned_counts[s] = split_targets[s] - remaining_budget[s]
+    total_assigned = sum(assigned_counts.values())
+
+    wasted_frames = total_frames - total_assigned
+    wasted_percent = wasted_frames/total_frames if total_frames > 0 else 0
+
+    for split in ('train', 'val', 'train'):
+        actual_percent = assigned_counts[split] / total_frames * 100
+        target_percent = split_targets[split] / total_frames * 100
+        print(f"{split:>5}: {actual_percent:.1f}% (target {target_percent:.1f}%)")
+
+    if wasted_percent > waste_threshold: 
+        print(f"  WARNING: {wasted_frames*100:.1f}% of frames unassigned (threshold: {waste_threshold*100:.1f}%)")
+        print("Triggering recommended labelling...")
+        recommend_labeling(df, wasted_frames, waste_threshold)
+
+    result = {}
+    for split_name, entries in buckets.items():
+        parts = []
+        for filename, num_frames in entries:
+            video_df = groups.get_group(filename)
+            if num_frames is not None:
+                video_df = video_df.iloc[:num_frames]
+            parts.append(video_df)
+        if parts:
+            result[split_name] = pd.concat(parts).reset_index(drop=True)
+        else:
+            result[split_name] = pd.DataFrame(columns=df.columns)
+
+    train_df = result['train']
+    val_df = result['val']
+    test_df = result['test']
 
     return train_df, val_df, test_df
-
 
 def recommend_labeling(df, unlabeled_videos, waste_threshold):
     # (Called when waste exceeds threshold)
@@ -105,20 +418,14 @@ def recommend_labeling(df, unlabeled_videos, waste_threshold):
     # Focus on Position Balance first. 
     # If your heatmap shows zero 9s, and an unlabeled video is from a time of high swarm activity, that video gets a massive "Priority Bonus."
 
-def balance_classes(train_df, val_df, test_df)
-    # After splitting, check class distribution at each digit position independently. 
-    # If any position is significantly skewed within a split, apply stratified oversampling 
-    # (or undersampling, configurable) at the frame level — not the video level, 
-    # since we're already past the video-grouping step. 
-    # Oversampling here means duplicating individual frames, which is fine for a CRNN training set.
-
-    # Warning: Do not oversample your Validation or Test sets. 
-    # You should only ever oversample the Train set. 
-    # Your Test set must remain "pure" to give you an honest accuracy score.
+def balance_classes(dfs):
+    # need to come back to this after moving from CRNN to CNN
 
 
 if __name__ == "__main__":
-    # this is all used to be in split_data and needs fixing
+    # add args: csvpath, output path, display row num, waste_threshold
+    # prompt for those args if not given, or use default values
+
     print(f"Reading {csv_path}...")
     df = pd.read_csv(csv_path)
 
@@ -130,22 +437,29 @@ if __name__ == "__main__":
         print(f"Expected columns: {expected_columns}")
         print(f"Actual columns: {actual_columns}")
         print("CSV columns must match the expected columns exactly. Exiting...")
-        sys.exit(0)
+        sys.exit()
 
     n = len(df)
     print(f"Total samples: {n}")
     
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
-        
-    # ==========================================
-    duplicates_df = check_duplicates(df)
-    check_erratic_fluctuations(df, )
-    validate_format(df, )
-    handle_flagged(flagged_df)
 
-    train_df, val_df, test_df = split_data(.....)
-    balance_classes(...)
+    flagged = pd.DataFrame()
+
+    for func, reason in zip(
+        [check_duplicates, check_erratic_fluctuations, validate_format],
+        ['duplicate', 'large fluctuation', 'invalid format/out of range']
+    ):
+        temp_df = func(df, n=10)
+        if temp_df is not None: 
+            temp_df['flag_reason'] = reason
+            flagged = pd.concat([flagged, temp_df], ignore_index=True)
+
+    handle_flagged(df, flagged, output_path)
+
+    dfs = split_data(df)
+    balance_classes(dfs)
 
     print(f"Train: {len(train_df)} ({len(train_df)/n:.1%})")
     print(f"Val:   {len(val_df)} ({len(val_df)/n:.1%})")
