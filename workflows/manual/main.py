@@ -161,7 +161,7 @@ if __name__ == "__main__":
     )
     if not video_path:
         QMessageBox.information(None, "No file selected", "No video selected. Exiting...")
-        sys.exit(0)
+        sys.exit()
 
     scale_video = cv2.VideoCapture(video_path)
 
@@ -189,7 +189,7 @@ if __name__ == "__main__":
 
         if not output_parent:
             QMessageBox.information(None, "No folder selected", "No folder for the output files selected. Exiting...")
-            sys.exit(0)
+            sys.exit()
 
         output_folder = os.path.join(output_parent, f"{video_base}_{timestamp}")
 
@@ -258,7 +258,7 @@ if __name__ == "__main__":
                                                     QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks)
                     if not output_parent:
                         QMessageBox.information(None, "No folder selected", "No folder for the output files selected. Exiting...")
-                        sys.exit(0)
+                        sys.exit()
 
                     output_folder = os.path.join(output_parent, f"{video_base}_{timestamp}")
 

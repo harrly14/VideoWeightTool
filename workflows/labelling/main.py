@@ -68,7 +68,7 @@ def main():
         else:
             dialog = StartupDialog()
             if dialog.exec_() != StartupDialog.Accepted:
-                sys.exit(0)
+                sys.exit()
             
             num_frames_per_video, video_dir, csv_path = dialog.get_config()
     
@@ -90,7 +90,7 @@ def main():
                 "No videos to process",
                 f"All videos in {video_dir} have already been processed, or no videos found."
             )
-            sys.exit(0)
+            sys.exit()
         
         print(f"Found {len(queue)} videos to process")
         
@@ -127,7 +127,7 @@ def main():
                 )
                 
                 if reply == QMessageBox.No:
-                    sys.exit(0)
+                    sys.exit()
                 
                 queue = valid_queue
         
@@ -137,7 +137,7 @@ def main():
                 "No valid videos",
                 "No valid videos to process after validation."
             )
-            sys.exit(0)
+            sys.exit()
         
         print(f"{len(queue)} valid videos ready to process")
         
@@ -156,7 +156,7 @@ def main():
         )
         
         if reply == QMessageBox.Cancel:
-            sys.exit(0)
+            sys.exit()
         
         processed = manager.process_batch(queue)
         
@@ -171,7 +171,7 @@ def main():
         QMessageBox.critical(None, "Error", f"Batch processing failed:\n{e}")
         sys.exit(1)
     
-    sys.exit(0)
+    sys.exit()
 
 
 if __name__ == "__main__":

@@ -201,7 +201,7 @@ def main():
             menu_training()
         elif choice == '0':
             print(f"{COLORS['GREEN']}Goodbye.{COLORS['ENDC']}")
-            sys.exit(0)
+            sys.exit()
         else:
             print(f"{COLORS['RED']}Invalid choice. Please try again.{COLORS['ENDC']}")
             input(f"\n{COLORS['DIM']}Press Enter to continue...{COLORS['ENDC']}")
