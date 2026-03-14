@@ -10,6 +10,7 @@ Flags:
         --output PATH          Path to output CSV file (default: <video>_weights.csv)
         --model PATH           Path to trained model (default: data/models/best_accuracy_model.pth)
         --roi X1,Y1,...,X4,Y4  ROI as 8 comma-separated quad points (auto-loaded from data/metadata.json if not provided)
+        --dividers D1,D2,D3    Three digit-divider x-coordinates in canvas space (used with --roi)
         --save-video           Create annotated output video with weight overlay
 
     Processing:
@@ -38,6 +39,7 @@ import os
 import sys
 import time
 import re
+import torch.nn.functional as F
 os.environ["OPENCV_FFMPEG_READ_ATTEMPTS"] = str(2**18)
 
 import json
@@ -50,11 +52,11 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from core.model import create_model
 from core.dataset import get_transforms
 from core.config import CNN_WIDTH, CNN_HEIGHT
-from core.roi_utils import get_roi_for_frame, warp_roi_to_canvas
+from core.roi_utils import get_roi_for_frame, warp_roi_to_canvas, slice_roi_into_digits
 
 
 def load_model(model_path, device):
-    """Load trained model from checkpoint, including char_map if present."""
+    """Load trained model from checkpoint."""
     try:
         checkpoint = torch.load(model_path, map_location=device)
         if 'model_state_dict' in checkpoint:
@@ -67,20 +69,14 @@ def load_model(model_path, device):
         if any(key.startswith('_orig_mod.') for key in state_dict.keys()):
             state_dict = {key.replace('_orig_mod.', ''): value for key, value in state_dict.items()}
         
-        # Load char_map from checkpoint if present, otherwise use default from config
-        char_map = checkpoint.get('char_map', None) if isinstance(checkpoint, dict) else None
-        
-        model = create_model(device=device, char_map=char_map)
+        model = create_model(device=device)
         model.load_state_dict(state_dict)
         model.eval()
         print(f"Model loaded from: {model_path}")
-        if char_map is not None:
-            print(f"  char_map loaded from checkpoint")
         return model
     except Exception as e:
         raise Exception(f"Failed to load model from {model_path}: {e}")
 
-# ============================================================
 # CONFIGURATION
 
 def cleanup_checkpoint(checkpoint_path):
@@ -89,9 +85,7 @@ def cleanup_checkpoint(checkpoint_path):
         os.remove(checkpoint_path)
         print("  Checkpoint file cleaned up")
 
-# ============================================================
 # VIDEO PROCESSING
-# ============================================================
 def get_video_metadata(video_path):
     """Get video metadata without loading frames"""
     if not os.path.exists(video_path):
@@ -127,83 +121,75 @@ def preprocess_frame(frame, transform):
     
     return image_tensor
 
-# ============================================================
 # INFERENCE
-# ============================================================
-from core.config import MIN_NONBLANK_COUNT
 
-def predict_weight_batch(model, frame_tensors, device):
-    """
-    Run model inference on a batch of frames.
-    
-    Returns raw model output (no format enforcement) with confidence and entropy
-    calculated only over non-blank token predictions.
-    
-    Args:
-        model: trained model
-        frame_tensors: list of tensors (C, H, W)
-        device: torch device
-    Returns:
-        list of (predicted_weight, confidence, entropy) tuples
-        - predicted_weight: raw decoded string (may not match X.XXX format)
-        - confidence: mean confidence over non-blank predictions (0.0 if too few non-blank tokens)
-        - entropy: mean entropy over non-blank predictions
-    """
-    if len(frame_tensors) == 0:
+def predict_digits_batch(model, digit_tensors, device):
+    """Predict per-digit class/confidence/entropy from variable-width tensors."""
+    if not digit_tensors:
         return []
-    
-    # Stack into batch: list of (C,H,W) -> (B, C, H, W)
-    batch_tensor = torch.stack(frame_tensors).to(device)
-    
+
+    tensor_images = []
+    for image in digit_tensors:
+        if isinstance(image, torch.Tensor):
+            tensor_image = image
+        else:
+            image_array = np.asarray(image)
+            if image_array.ndim == 2:
+                tensor_image = torch.from_numpy(image_array).unsqueeze(0)
+            else:
+                tensor_image = torch.from_numpy(np.transpose(image_array, (2, 0, 1)))
+
+        if tensor_image.ndim == 2:
+            tensor_image = tensor_image.unsqueeze(0)
+        tensor_images.append(tensor_image.float())
+
+    max_width = max(image.shape[-1] for image in tensor_images)
+    padded_images = [
+        F.pad(image, (0, max_width - image.shape[-1], 0, 0), value=0)
+        for image in tensor_images
+    ]
+
+    batch = torch.stack(padded_images).to(device)
+
     with torch.no_grad():
-        # Forward pass
-        log_probs, _ = model(batch_tensor)
+        logits = model(batch)
+        probs = torch.softmax(logits, dim=1)
+        confidences, pred_digits = torch.max(probs, dim=1)
+        entropies = -(probs * torch.log(probs.clamp_min(1e-12))).sum(dim=1)
 
-        # Decode predictions using model's built-in decoder
-        # log_probs shape: (seq_len, batch, num_classes)
-        # Return RAW output without format enforcement for honest validation
-        decoded_list = model.decode_predictions(log_probs, enforce_format=False)
+    return [
+        (int(pred_digits[i].item()), float(confidences[i].item()), float(entropies[i].item()))
+        for i in range(len(digit_tensors))
+    ]
 
-        # Calculate confidence and entropy over NON-BLANK tokens only
-        probs = torch.exp(log_probs)  # (seq_len, batch, num_classes)
-        max_probs, preds = torch.max(probs, dim=2)  # (seq_len, batch)
-        
-        # Blank label is the last class
-        blank_label = probs.size(2) - 1
-        non_blank_mask = (preds != blank_label).float()  # (seq_len, batch)
-        
-        # Count non-blank predictions per sample
-        non_blank_counts = non_blank_mask.sum(dim=0)  # (batch,)
-        
-        # Calculate confidence: mean of max_probs over non-blank timesteps only
-        masked_max_probs = max_probs * non_blank_mask  # Zero out blank timesteps
-        # Avoid division by zero; use count or 1
-        safe_counts = non_blank_counts.clamp(min=1)
-        confidences = masked_max_probs.sum(dim=0) / safe_counts  # (batch,)
-        
-        # If too few non-blank tokens, confidence is unreliable -> set to 0
-        confidences = torch.where(
-            non_blank_counts >= MIN_NONBLANK_COUNT,
-            confidences,
-            torch.zeros_like(confidences)
-        )
+def assemble_frame_prediction(digit_results):
+    """Assemble a frame-level prediction from 4 digit-level tuples."""
+    if len(digit_results) != 4:
+        raise ValueError(f"Expected 4 digit results, got {len(digit_results)}")
 
-        # Calculate per-sample entropy across non-blank time steps only
-        eps = 1e-9
-        entropy_per_timestep = - (probs * torch.log(probs + eps)).sum(dim=2)  # (seq_len, batch)
-        masked_entropy = entropy_per_timestep * non_blank_mask
-        entropies = masked_entropy.sum(dim=0) / safe_counts  # (batch,)
+    pred_digits = [int(d[0]) for d in digit_results]
+    digit_confidences = [float(d[1]) for d in digit_results]
+    digit_entropies = [float(d[2]) for d in digit_results]
 
-        # Pair predictions with confidences and entropies
-        results = [(pred, conf.item(), ent.item()) for pred, conf, ent in zip(decoded_list, confidences, entropies)]
+    weight_str = f"{pred_digits[0]}.{pred_digits[1]}{pred_digits[2]}{pred_digits[3]}"
+    min_confidence = min(digit_confidences)
+    mean_confidence = float(sum(digit_confidences) / len(digit_confidences))
+    mean_entropy = float(sum(digit_entropies) / len(digit_entropies))
 
-    return results
+    return {
+        'raw_weight': weight_str,
+        'confidence': min_confidence,
+        'mean_confidence': mean_confidence,
+        'entropy': mean_entropy,
+        'digit_confidences': digit_confidences,
+        'digit_entropies': digit_entropies,
+    }
 
 def process_video_streaming_batched(video_path, model, transform, roi_sections, device, 
                                     batch_size=8, checkpoint_every=1000, resume=False,
                                     frame_range=None):
     """
-    Process video frame-by-frame with batch inference and checkpoint saving.
+    Process video frame-by-frame with digit-level batched inference and checkpoint saving.
     Memory usage: O(batch_size) regardless of video length.
     
     Args:
@@ -248,16 +234,56 @@ def process_video_streaming_batched(video_path, model, transform, roi_sections, 
             print(f"Skipping to frame {start_frame}/{total_frames}")
             cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
     
-    frame_batch = []
-    frame_nums = []
+    digit_batch = []
+    digit_mapping = []  # [(frame_num, slot_idx)]
+    pending_frame_nums = []
     frame_num = start_frame
     frames_to_process = range_end - start_frame + 1
+    results_by_frame = {int(r['frame_num']): r for r in results}
     
     print(f"\n{'='*60}")
     print(f"Processing {frames_to_process} frames (batch_size={batch_size})...")
     print(f"{'='*60}")
     
     no_roi_frames = []  # Track frames with no ROI coverage
+
+    def flush_digit_batch(last_processed_frame):
+        nonlocal digit_batch, digit_mapping, pending_frame_nums, results_by_frame
+        if not digit_batch:
+            return
+
+        predictions = predict_digits_batch(model, digit_batch, device)
+
+        grouped = {}
+        for (fn, slot_idx), digit_result in zip(digit_mapping, predictions):
+            if fn not in grouped:
+                grouped[fn] = {}
+            grouped[fn][slot_idx] = digit_result
+
+        for fn in pending_frame_nums:
+            timestamp = fn / fps if fps > 0 else fn
+            slots = grouped.get(fn, {})
+            if len(slots) != 4 or any(i not in slots for i in range(4)):
+                results_by_frame[fn] = {
+                    'frame_num': fn,
+                    'timestamp': timestamp,
+                    'raw_weight': None,
+                    'confidence': 0.0,
+                    'entropy': 0.0,
+                }
+                continue
+
+            assembled = assemble_frame_prediction([slots[i] for i in range(4)])
+            assembled.update({'frame_num': fn, 'timestamp': timestamp})
+            results_by_frame[fn] = assembled
+
+        digit_batch = []
+        digit_mapping = []
+        pending_frame_nums = []
+
+        if checkpoint_path and checkpoint_every > 0 and last_processed_frame % checkpoint_every == 0:
+            checkpoint_results = [results_by_frame[k] for k in sorted(results_by_frame.keys())]
+            save_checkpoint(checkpoint_path, checkpoint_results, last_processed_frame)
     
     with tqdm(total=frames_to_process, desc="Processing frames", unit="frame", 
               initial=0, dynamic_ncols=True) as pbar:
@@ -267,74 +293,70 @@ def process_video_streaming_batched(video_path, model, transform, roi_sections, 
                 break
             
             # Get the correct ROI for this frame
-            roi_coords = get_roi_for_frame(frame_num, roi_sections)
-            
-            if roi_coords is None:
+            roi_info = get_roi_for_frame(frame_num, roi_sections)
+            if roi_info is None:
                 # No ROI for this frame — emit placeholder, skip inference
                 timestamp = frame_num / fps if fps > 0 else frame_num
-                results.append({
+                results_by_frame[frame_num] = {
                     'frame_num': frame_num,
                     'timestamp': timestamp,
                     'raw_weight': None,
                     'confidence': 0.0,
                     'entropy': 0.0,
                     'no_roi': True,
-                })
+                }
                 no_roi_frames.append(frame_num)
                 pbar.update(1)
+                if checkpoint_path and checkpoint_every > 0 and frame_num % checkpoint_every == 0:
+                    checkpoint_results = [results_by_frame[k] for k in sorted(results_by_frame.keys())]
+                    save_checkpoint(checkpoint_path, checkpoint_results, frame_num)
                 frame_num += 1
                 continue
+            else:
+                roi_coords, dividers = roi_info
             
-            cropped = get_roi(frame, roi_coords)
-            
-            tensor = preprocess_frame(cropped, transform)
-            
-            frame_batch.append(tensor)
-            frame_nums.append(frame_num)
-            
-            if len(frame_batch) >= batch_size:
-                predictions = predict_weight_batch(model, frame_batch, device)
-                
-                for fn, (weight, confidence, entropy) in zip(frame_nums, predictions):
-                    timestamp = fn / fps if fps > 0 else fn
-                    results.append({
-                        'frame_num': fn,
-                        'timestamp': timestamp,
-                        'raw_weight': weight,
-                        'confidence': confidence,
-                        'entropy': entropy
-                    })
-                
-                pbar.update(len(frame_batch))
-                
-                frame_batch = []
-                frame_nums = []
-                
-                if checkpoint_path and checkpoint_every > 0 and frame_num % checkpoint_every == 0:
-                    save_checkpoint(checkpoint_path, results, frame_num)
+            canvas = get_roi(frame, roi_coords)
+            digit_crops = slice_roi_into_digits(canvas, dividers) if dividers else None
+
+            if digit_crops is None or len(digit_crops) != 4:
+                timestamp = frame_num / fps if fps > 0 else frame_num
+                results_by_frame[frame_num] = {
+                    'frame_num': frame_num,
+                    'timestamp': timestamp,
+                    'raw_weight': None,
+                    'confidence': 0.0,
+                    'entropy': 0.0,
+                }
+            else:
+                pending_frame_nums.append(frame_num)
+                for slot_idx, digit_crop in enumerate(digit_crops):
+                    tensor = preprocess_frame(digit_crop, transform)
+                    digit_batch.append(tensor)
+                    digit_mapping.append((frame_num, slot_idx))
+
+            if len(pending_frame_nums) >= batch_size:
+                flush_digit_batch(frame_num)
+
+            pbar.update(1)
+
+            if checkpoint_path and checkpoint_every > 0 and frame_num % checkpoint_every == 0:
+                checkpoint_results = [results_by_frame[k] for k in sorted(results_by_frame.keys())]
+                save_checkpoint(checkpoint_path, checkpoint_results, frame_num)
             
             frame_num += 1
     
-    if len(frame_batch) > 0:
-        predictions = predict_weight_batch(model, frame_batch, device)
-        for fn, (weight, confidence, entropy) in zip(frame_nums, predictions):
-            timestamp = fn / fps if fps > 0 else fn
-            results.append({
-                'frame_num': fn,
-                'timestamp': timestamp,
-                'raw_weight': weight,
-                'confidence': confidence,
-                'entropy': entropy
-            })
-        pbar.update(len(frame_batch))
+    if digit_batch:
+        flush_digit_batch(frame_num - 1)
     
     cap.release()
+
+    results = [results_by_frame[k] for k in sorted(results_by_frame.keys())]
     
     if no_roi_frames:
         print(f"\n  {len(no_roi_frames)} frames had no ROI coverage and were skipped (will be flagged as 'no_roi')")
     
     if checkpoint_path and checkpoint_every > 0:
-        save_checkpoint(checkpoint_path, results, frame_num)
+        save_checkpoint(checkpoint_path, results, frame_num - 1)
     
     return results, checkpoint_path
 
@@ -347,16 +369,13 @@ from core.config import FILTER_CONF_THRESH, FILTER_ENT_THRESH, FILTER_JUMP_THRES
 FLAG_REASONS = {
     'low_conf': 'Low confidence',
     'high_ent': 'High entropy',
-    'bad_format': 'Invalid format',
     'jump': 'Physical jump',
     'parse_error': 'Parse error',
-    'low_nonblank': 'Too few non-blank tokens',
     'no_roi': 'No ROI coverage for frame',
 }
 
 def robust_filter_pipeline(results, conf_thresh=FILTER_CONF_THRESH, ent_thresh=FILTER_ENT_THRESH, jump_thresh=FILTER_JUMP_THRESH):
-    # exactly 1 digit, dot, exactly 3 digits
-    pattern = re.compile(r'^\d\.\d{3}$')
+    """Apply temporal and confidence/entropy based filtering over raw predictions."""
     
     filtered_weights = []
     flag_reasons = []
@@ -376,22 +395,15 @@ def robust_filter_pipeline(results, conf_thresh=FILTER_CONF_THRESH, ent_thresh=F
         reason = None
         is_valid = False
         parsed_val = None
-        str_pred = str(pred)
-        
-        if len(str_pred) != 5:
-            reason = 'bad_format'
-        elif not pattern.match(str_pred):
-            reason = 'bad_format'
-        else:
-            try:
-                parsed_val = float(pred)
-            except (ValueError, TypeError):
-                reason = 'parse_error'
+        try:
+            parsed_val = float(pred)
+        except (ValueError, TypeError):
+            reason = 'parse_error'
         
         if reason is None:
-            if conf == 0.0:
-                reason = 'low_nonblank'
-            elif conf < conf_thresh:
+            # parsed_val is guaranteed to be float here because parse_error was not set.
+            assert parsed_val is not None
+            if conf < conf_thresh:
                 reason = 'low_conf'
             elif ent > ent_thresh:
                 reason = 'high_ent'
@@ -689,6 +701,7 @@ Examples:
     parser.add_argument('--output', type=str, help='Path to output CSV file (default: video_name_weights.csv)')
     parser.add_argument('--model', type=str, default='data/models/best_accuracy_model.pth', help='Path to trained model')
     parser.add_argument('--roi', type=str, help='ROI as quad points: x1,y1,x2,y2,x3,y3,x4,y4 (auto-loaded from data/metadata.json if not provided)')
+    parser.add_argument('--dividers', type=str, help='Three digit-divider x-coordinates in canvas space: d1,d2,d3 (used with --roi)')
     parser.add_argument('--batch-size', type=int, default=8, help='Batch size for inference')
     parser.add_argument('--checkpoint-every', type=int, default=0, help='Save checkpoint every N frames (0 to disable)')
     parser.add_argument('--resume', action='store_true', help='Resume from last checkpoint')
@@ -750,18 +763,24 @@ def main():
     roi_sections = None
     if args.roi:
         # Parse --roi as quad: x1,y1,x2,y2,x3,y3,x4,y4
-        # This becomes a single "section" covering all frames
+        # This becomes a single section covering all frames
         try:
             coords = [int(x) for x in args.roi.split(',')]
             if len(coords) == 8:
                 roi_quad = [[coords[i], coords[i+1]] for i in range(0, 8, 2)]
-                # Wrap in sections format for compatibility
-                roi_sections = [{'quad': roi_quad, 'start_frame': 0, 'end_frame': float('inf')}]
+                dividers = []
+                if args.dividers:
+                    div_coords = [int(x) for x in args.dividers.split(',')]
+                    if len(div_coords) != 3:
+                        print(f"Error: --dividers must be exactly 3 comma-separated integers, got {len(div_coords)}")
+                        return 1
+                    dividers = sorted(div_coords)
+                roi_sections = [{'quad': roi_quad, 'dividers': dividers, 'start_frame': 0, 'end_frame': float('inf')}]
             else:
                 print(f"Error: --roi must be 8 comma-separated integers for quad points, got {len(coords)}")
                 return 1
         except ValueError as e:
-            print(f"Error parsing --roi: {e}")
+            print(f"Error parsing --roi or --dividers: {e}")
             return 1
     else:
         print("\nNo ROI specified. Loading from data/metadata.json...")
@@ -957,7 +976,8 @@ def main():
     if args.save_video:
         video_output = os.path.splitext(args.video)[0] + '_annotated.mp4'
         print(f"\nCreating annotated video: {video_output}")
-        create_annotated_video(args.video, results, video_output, roi_coords)
+        annotation_roi = roi_sections[0].get('quad') if roi_sections else None
+        create_annotated_video(args.video, results, video_output, annotation_roi)
     
     if checkpoint_path:
         cleanup_checkpoint(checkpoint_path)

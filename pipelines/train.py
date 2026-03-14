@@ -10,7 +10,6 @@ import sys
 import os
 import argparse
 from torch.utils.tensorboard import SummaryWriter
-import editdistance
 import torchvision.utils as vutils
 import random
 
@@ -18,14 +17,14 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 from core.dataset import create_dataloaders
 from core.model import create_model
-from core.config import CHAR_MAP, NUM_CHARS, HIDDEN_SIZE, NUM_LSTM_LAYERS, IMAGE_SIZE
+from core.config import IMAGE_SIZE, NUM_DIGIT_CLASSES
 
 """
 Scale OCR Training Script
 
-Trains the CRNN model for reading scale weights from extracted frame images.
-This file exposes the main training entrypoint `train_model(...)` and a CLI
-wrapper at the bottom of the module.
+Trains a CNN digit classification model for reading scale weights from extracted 
+frame crops. This file exposes the main training entrypoint `train_model(...)` 
+and a CLI wrapper at the bottom of the module.
 
 Quick usage (CLI):
     python pipelines/train.py            # run with defaults
@@ -52,9 +51,6 @@ See the `train_model` function for the full programmatic API and arguments.
 """
 
 def seed_everything(seed=42):
-    """
-    Set random seeds for reproducibility
-    """
     random.seed(seed)
     os.environ['PYTHONHASHSEED'] = str(seed)
     np.random.seed(seed)
@@ -89,249 +85,163 @@ class SignalHandler:
         print("="*60 + "\n")
         self.received_signal = True
 
-class CTCLabelEncoder:
-    """
-    Encode text labels to indices for CTC loss
-    Handles conversion between strings like "7.535" and tensor indices
-    """
-    def __init__(self):
-        self.char_to_idx = {v: k for k, v in CHAR_MAP.items()}
-        self.idx_to_char = dict(CHAR_MAP)
-        self.blank_label = NUM_CHARS  # CTC blank is always last class
-    
-    def encode(self, text):
-        return [self.char_to_idx[c] for c in text if c in self.char_to_idx]
-    
-    def encode_batch(self, texts):
-        encoded = [self.encode(text) for text in texts]
-        target_lengths = torch.LongTensor([len(enc) for enc in encoded])
-        
-        # Concatenate all targets into single tensor (required by CTC loss)
-        targets = torch.cat([torch.LongTensor(enc) for enc in encoded])
-        
-        return targets, target_lengths
-
-
-def train_one_epoch(model, train_loader, criterion, optimizer, encoder, device, epoch, scaler=None, accumulation_steps=1, writer=None):
-    """
-    Train for one epoch with mixed precision support and gradient accumulation
-    
-    Args:
-        model: The neural network
-        train_loader: DataLoader for training data
-        criterion: Loss function (CTCLoss)
-        optimizer: Optimizer (Adam)
-        encoder: Label encoder
-        device: 'cpu' or 'cuda'
-        epoch: Current epoch number
-        scaler: GradScaler for mixed precision training (optional)
-        accumulation_steps: Number of batches to accumulate gradients over
-    
-    Returns:
-        avg_loss: Average loss for the epoch
-    """
-    # Initialize signal handler at the start of training
-    # We need to pass this to the workers or handle it globally
-    # For now, we rely on the global handler check in the main loop
-    
+def train_one_epoch(model, train_loader, criterion, optimizer, device, epoch, scaler=None):
     model.train()
     
-    total_loss = 0
     num_batches = len(train_loader)
-    start_time = time.time()
-    
-    optimizer.zero_grad()
-    
-    batch_wdith = len(str(num_batches))
+    last_log_time = time.time()
 
-    # We need to access the signal handler from the outer scope or pass it in
-    # Since we didn't pass it, we'll check the module-level signal handler if possible
-    # or just rely on the KeyboardInterrupt being caught in the main loop
-    
-    for batch_idx, (images, weights, filenames) in enumerate(train_loader):
+    total_loss = 0.0
+    total_acc = 0.0
+
+    for batch_idx, (images, labels, frame_ids, slot_idxs) in enumerate(train_loader):
         images = images.to(device)
-        
-        targets, target_lengths = encoder.encode_batch(weights)
-        targets = targets.to(device)
-        target_lengths = target_lengths.to(device)
-        
-        # Forward pass with automatic mixed precision
-        if scaler is not None:
-            with torch.amp.autocast(device.type):
-                log_probs, output_lengths = model(images)
-                output_lengths = output_lengths.to(device)
-                loss = criterion(log_probs, targets, output_lengths, target_lengths)
-                loss = loss / accumulation_steps
-        else:
-            log_probs, output_lengths = model(images)
-            output_lengths = output_lengths.to(device)
-            loss = criterion(log_probs, targets, output_lengths, target_lengths)
-            loss = loss / accumulation_steps
-        
-        if writer is not None and (batch_idx + 1) % accumulation_steps == 0:
-            # Calculate global step for continuous x-axis
-            global_step = (epoch * num_batches) + batch_idx
-            # We multiply by accumulation_steps because loss was divided by it earlier
-            current_loss = loss.item() * accumulation_steps
-            writer.add_scalar('Train/Batch_Loss', current_loss, global_step)
-            writer.add_scalar('Train/Learning_Rate', optimizer.param_groups[0]['lr'], global_step)
+        labels = labels.to(device)
 
-        if torch.isnan(loss):
-            print(f"Warning: NaN loss detected at batch {batch_idx}")
-            continue
-        
+        optimizer.zero_grad()
+
         if scaler is not None:
+            with torch.amp.autocast(device_type=device.type):
+                logits = model(images)
+                loss = criterion(logits, labels)
             scaler.scale(loss).backward()
-        else:
-            loss.backward()
-        
-        if (batch_idx + 1) % accumulation_steps == 0:
-            if scaler is not None:
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
-                scaler.step(optimizer)
-                scaler.update()
-            else:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
-                optimizer.step()
-            
-            optimizer.zero_grad()
-        
-        total_loss += loss.item() * accumulation_steps
-        
-        if (batch_idx + 1) % 10 == 0:
-            avg_loss_so_far = total_loss / (batch_idx + 1)
-            elapsed = time.time() - start_time
-            batches_per_sec = (batch_idx + 1) / elapsed
-            
-            print(f"  Batch [{batch_idx+1:>{batch_wdith}}/{num_batches}] | "
-                  f"Loss: {loss.item() * accumulation_steps:.4f} | "
-                  f"Avg Loss: {avg_loss_so_far:.4f} | "
-                  f"Speed: {batches_per_sec:.2f} batch/s")
-    
-    if len(train_loader) % accumulation_steps != 0:
-        if scaler is not None:
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
             scaler.step(optimizer)
             scaler.update()
         else:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+            logits = model(images)
+            loss = criterion(logits, labels)
+            loss.backward()
             optimizer.step()
-        optimizer.zero_grad()
+
+        batch_acc = (logits.argmax(1) == labels).float().mean()
+        total_loss += loss.item()
+        total_acc += batch_acc.item()
+
+        if (batch_idx + 1) % 10 == 0:
+            now = time.time()
+            interval = now - last_log_time
+            speed = 10 / interval
+            print(f"  Epoch [{epoch}] Batch [{batch_idx+1}/{num_batches}] "
+                  f"Loss: {loss.item():.4f} Acc: {batch_acc.item():.2%} Speed: {speed:.1f} it/s")
+            last_log_time = now
     
-    avg_loss = total_loss / num_batches
-    return avg_loss
+    avg_loss = total_loss / num_batches if num_batches > 0 else 0
+    avg_acc = total_acc / num_batches if num_batches > 0 else 0
+    print(f"  Train Summary -> Loss: {avg_loss:.4f} | Acc: {avg_acc:.2%}")
+    return avg_loss, avg_acc
+    return avg_loss, avg_acc
 
 
 def log_visual_validation(writer, epoch, images, targets, predictions):
     """
     Makes a grid of images with their predicted vs actual labels and logs to TensorBoard.
     """
-    if writer is None:
+    if writer is None or images is None or len(images) == 0:
         return
 
     # vutils.make_grid expects BxCxHxW
-    img_grid = vutils.make_grid(images[:4], normalize=True)
+    max_imgs = min(len(images), 4)
+    img_grid = vutils.make_grid(images[:max_imgs], normalize=True)
     writer.add_image('Validation/Images', img_grid, epoch)
     
     # Create a text string for the first few samples
     text_log = "### Validation Samples\n\n| Index | Ground Truth | Prediction | Status |\n|:---:|:---:|:---:|:---:|\n"
-    for i in range(min(len(images), 4)):
+    for i in range(max_imgs):
         status = "Match" if targets[i] == predictions[i] else "Mismatch"
         text_log += f"| `{targets[i]}` | `{predictions[i]}` | {status} |\n"
     
     writer.add_text('Validation/Predictions', text_log, epoch)
 
-def calculate_metrics(predictions, targets):
-    char_errors = 0
-    total_chars = 0
-    word_errors = 0
-    
-    for pred, gt in zip(predictions, targets):
-        total_chars += len(gt)
-        char_errors += editdistance.eval(pred, gt)
-        
-        if pred != gt:
-            word_errors += 1
-            
-    cer = char_errors / max(1, total_chars)
-    wer = word_errors / max(1, len(targets))
-    return cer, wer
-
-def validate(model, val_loader, criterion, encoder, device, epoch):
-    """
-    Validate the model
-    
-    Args:
-        model: The neural network
-        val_loader: DataLoader for validation data
-        criterion: Loss function (CTCLoss)
-        encoder: Label encoder
-        device: 'cpu' or 'cuda'
-        epoch: Current epoch number
-    
-    Returns:
-        avg_loss, char_accuracy, seq_accuracy, cer, wer, vis_images, vis_targets, vis_preds
-    """
+def validate(model, val_loader, criterion, device, epoch):
     model.eval()
     
-    total_loss = 0
+    total_loss = 0.0
+    total_correct_digits = 0
+    total_digits = 0
     
-    all_predictions = []
-    all_targets = []
     vis_images = None
+    vis_targets = []
+    vis_preds = []
     
-    with torch.no_grad():  # No gradient computation during validation
-        for batch_idx, (images, weights, filenames) in enumerate(val_loader):
+    # for sequence accuracy
+    sequence_data = {}  # dict of frame_id: {slot_idx: (predicted, target)}
+
+    # for class-level accuracy
+    class_correct = {i: 0 for i in range(10)}
+    class_total = {i: 0 for i in range(10)}
+
+    with torch.no_grad():
+        for batch_idx, (images, labels, frame_ids, slot_idxs) in enumerate(val_loader):
             images = images.to(device)
+            labels = labels.to(device)
             
-            targets, target_lengths = encoder.encode_batch(weights)
-            targets = targets.to(device)
-            target_lengths = target_lengths.to(device)
+            logits = model(images)
+            loss = criterion(logits, labels)
+            total_loss += loss.item()
+
+            predictions = logits.argmax(1)
             
-            log_probs, output_lengths = model(images)
-            output_lengths = output_lengths.to(device)
+            # Digit accuracy logic
+            correct = (predictions == labels)
+            total_correct_digits += correct.sum().item()
+            total_digits += labels.size(0)
             
-            loss = criterion(log_probs, targets, output_lengths, target_lengths)
-            
-            if not torch.isnan(loss):
-                total_loss += loss.item()
-            
-            # use a slightly larger max_length 
-            max_len = max(len(w) for w in weights) if len(weights) > 0 else 10
-            predictions = model.decode_predictions(log_probs, max_length=max_len + 5)
-            
-            all_predictions.extend(predictions)
-            all_targets.extend(weights)
+            # Sequence accuracy logic & per-class logic
+            for i in range(len(labels)):
+                p = predictions[i].item()
+                t = labels[i].item()
+                f_id = frame_ids[i]
+                s_idx = slot_idxs[i].item()
+
+                if f_id not in sequence_data:
+                    sequence_data[f_id] = {}
+                sequence_data[f_id][s_idx] = (p, t)
+                
+                class_correct[t] += (p == t)
+                class_total[t] += 1
             
             # Capture first batch for visualization
             if batch_idx == 0:
                 vis_images = images.cpu()
+                vis_targets = labels.cpu().tolist()
+                vis_preds = predictions.cpu().tolist()
+                
+    num_batches = len(val_loader)
+    avg_loss = total_loss / num_batches if num_batches > 0 else 0
+    digit_acc = (total_correct_digits / total_digits * 100) if total_digits > 0 else 0.0
     
-    avg_loss = total_loss / len(val_loader)
-    cer, wer = calculate_metrics(all_predictions, all_targets)
-    seq_accuracy = (1 - wer) * 100
+    # Calculate sequence accuracy
+    correct_seqs = 0
+    total_valid_seqs = 0
     
-    print(f"  Valid: Loss: {avg_loss:.4f} | "
-          f"CER: {cer:.4f} | "
-          f"Acc: {seq_accuracy:.2f}%")
+    for f_id, slots in sequence_data.items():
+        if len(slots) == 4:
+            total_valid_seqs += 1
+            is_correct = all(slots[s][0] == slots[s][1] for s in range(4))
+            if is_correct:
+                correct_seqs += 1
+                
+    seq_acc = (correct_seqs / total_valid_seqs * 100) if total_valid_seqs > 0 else 0.0
+
+    print(f"  Valid Summary -> Loss: {avg_loss:.4f} | "
+          f"Digit Acc: {digit_acc:.2f}% | "
+          f"Seq Acc: {seq_acc:.2f}% ({correct_seqs}/{total_valid_seqs})")
     
-    print("  Samples:")
-    num_examples = min(4, len(all_predictions))
-    for i in range(num_examples):
-        status = "[Match]   " if all_predictions[i] == all_targets[i] else "[Mismatch]"
-        print(f"    {status} Pred: {all_predictions[i]:<10} | Tgt: {all_targets[i]}")
+    # Optionally print per-class breakdown for worst classes to track imbalance issues
+    # print("  Class Accuracies:")
+    # for c in range(10):
+    #     if class_total[c] > 0:
+    #         c_acc = class_correct[c] / class_total[c] * 100
+    #         if c_acc < 80.0 or class_total[c] < 5:  # highlight weak/rare classes
+    #             print(f"    Class {c}: {c_acc:.1f}% ({class_correct[c]}/{class_total[c]})")
     
-    return avg_loss, (1-cer)*100, seq_accuracy, cer, wer, vis_images, all_targets[:8], all_predictions[:8]
+    return avg_loss, digit_acc, seq_acc, vis_images, vis_targets, vis_preds
 
 
 def train_model(
     batch_size=16,
     num_epochs=50,
     learning_rate=0.001,
-    hidden_size=HIDDEN_SIZE,
-    num_lstm_layers=NUM_LSTM_LAYERS,
     image_size=IMAGE_SIZE,
     save_dir='data/models',
     data_dir='data',
@@ -344,18 +254,14 @@ def train_model(
     Main training function
     
     Args:
-        train_dir: Path to training data
-        val_dir: Path to validation data
-        test_dir: Path to test data (optional)
         batch_size: Batch size for training
         num_epochs: Number of training epochs
         learning_rate: Learning rate for optimizer
-        hidden_size: LSTM hidden size
-        num_lstm_layers: Number of LSTM layers
         image_size: (width, height) for image resizing
         save_dir: Directory to save models
         data_dir: Directory containing data
         resume_from: Path to checkpoint to resume from (optional)
+        use_amp: Whether to use automatic mixed precision
         seed: Random seed for reproducibility
         run_name: Name for the run (tensorboard logging)
     """
@@ -404,13 +310,9 @@ def train_model(
         prefetch_factor=2,
         verbose=False
     )
-
-    encoder = CTCLabelEncoder()
     
     model = create_model(
-        num_chars=len(encoder.char_to_idx),
-        hidden_size=hidden_size,
-        num_lstm_layers=num_lstm_layers,
+        num_classes=NUM_DIGIT_CLASSES,
         device=device.type
     )
 
@@ -428,7 +330,26 @@ def train_model(
         except:
             print(f"torch.compile() skipped.")
     
-    criterion = nn.CTCLoss(blank=encoder.blank_label, zero_infinity=True)
+    # Calculate class weights for imbalance from train dataset
+    train_digits = train_dataset.labels_df['digit_label'].astype(int)
+    class_counts = train_digits.value_counts().to_dict()
+    print("\nClass Distribution in Training Set:")
+    for c in range(10):
+        c_count = class_counts.get(c, 0)
+        print(f"  Digit {c}: {c_count:5d} samples")
+        
+    weights = torch.ones(NUM_DIGIT_CLASSES, dtype=torch.float32)
+    max_count = max(class_counts.values()) if class_counts else 1
+    for c in range(NUM_DIGIT_CLASSES):
+        c_count = class_counts.get(c, 0)
+        if c_count > 0:
+            # Floor out the weight so rare classes aren't over-weighted to > 10x
+            W = min(max_count / c_count, 10.0) 
+            weights[c] = W
+    weights = weights / weights.mean() # normalize
+    print(f"\nClass Weights for Loss: \n{weights.numpy()}\n")
+    
+    criterion = nn.CrossEntropyLoss(weight=weights.to(device))
     
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
@@ -473,8 +394,11 @@ def train_model(
 
         start_epoch = checkpoint['epoch'] + 1
         best_val_loss = checkpoint.get('best_val_loss', float('inf'))
+        best_seq_accuracy = checkpoint.get('best_seq_acc', 0.0)
+        best_digit_accuracy = checkpoint.get('best_digit_acc', 0.0)
         
     print(f"\nStarting training loop for {num_epochs - start_epoch} epochs...")
+    history = {'train_loss': [], 'train_acc': [], 'val_loss': [], 'digit_acc': [], 'seq_acc': []}
     
     try:
         for epoch in range(start_epoch, num_epochs):
@@ -484,21 +408,26 @@ def train_model(
             print(f"\nEpoch [{epoch+1}/{num_epochs}]")
             
 
-            train_loss = train_one_epoch(
-                    model, train_loader, criterion, optimizer, encoder, device, epoch+1,
-                    scaler=scaler,
-                    accumulation_steps=1, # change from 1 to 4 if hitting GPU memory limits
-                    writer=writer
+            train_loss, train_acc = train_one_epoch(
+                    model, train_loader, criterion, optimizer, device, epoch+1,
+                    scaler=scaler
             )
             
             if signal_handler.received_signal:
                 break
 
-            val_results = validate(model, val_loader, criterion, encoder, device, epoch+1)
-            val_loss, char_acc, seq_acc, cer, wer, v_imgs, v_targs, v_preds = val_results
+            val_loss, digit_acc, seq_acc, v_imgs, v_targs, v_preds = validate(model, val_loader, criterion, device, epoch+1)
+
+            history['train_loss'].append(train_loss)
+            history['train_acc'].append(train_acc)
+            history['val_loss'].append(val_loss)
+            history['digit_acc'].append(digit_acc)
+            history['seq_acc'].append(seq_acc)
 
             writer.add_scalar('Loss/Train', train_loss, epoch)
             writer.add_scalar('Loss/Val', val_loss, epoch)
+            writer.add_scalar('Metrics/Train_Acc', train_acc, epoch)
+            writer.add_scalar('Metrics/Digit_Acc', digit_acc, epoch)
             writer.add_scalar('Metrics/Seq_Acc', seq_acc, epoch)
             
             # Visual validation
@@ -514,8 +443,11 @@ def train_model(
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
                 'val_loss': val_loss,
                 'best_val_loss': best_val_loss,
+                'best_digit_acc': getattr(model, 'best_digit_accuracy', digit_acc),
+                'best_seq_acc': getattr(model, 'best_seq_accuracy', seq_acc),
             }
             
             torch.save(checkpoint, save_path / 'latest_model.pth')
@@ -533,7 +465,7 @@ def train_model(
         writer.close()
     print(f"\nTraining complete. Best sequence accuracy: {best_seq_accuracy:.2f}%")
     
-    return model, history, encoder, criterion, device, test_loader
+    return model, history, criterion, device, test_loader
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Train Scale OCR Model')
@@ -549,7 +481,7 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
 
-    model, history, label_encoder, criterion, device, test_loader = train_model(
+    model, history, criterion, device, test_loader = train_model(
         batch_size=args.batch_size,
         num_epochs=args.epochs,
         learning_rate=args.lr,

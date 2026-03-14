@@ -4,22 +4,32 @@ Shared ROI utilities used by extraction, inference, and UI preview.
 
 import cv2
 import numpy as np
-from typing import Optional, List, Dict
+from typing import List, Dict
+
 
 from core.config import CNN_WIDTH, CNN_HEIGHT
 
 
-def get_roi_for_frame(frame_num: int, roi_sections: List[Dict]) -> Optional[List[List[int]]]:
-    """
-    Find the correct ROI for a given frame number from a list of sections.
+def slice_roi_into_digits(canvas, dividers):
+    assert len(dividers) == 3
+    dividers = sorted(dividers) #just in case the user dragged the dividers out of order
+    height = canvas.shape[0]
+    width = canvas.shape[1]
+    boundaries = [0] + dividers + [width]
 
-    Args:
-        frame_num: The frame number to look up
-        roi_sections: List of section dicts with 'quad', 'start_frame', 'end_frame'
+    digits = []
+    for i in range(len(boundaries) - 1):
+        x_start = max(0,boundaries[i])
+        x_end = min(width, boundaries[i+1])
+        digit_crop = canvas[:, x_start:x_end]
+        if digit_crop.size == 0:
+            print(f"ERROR: Digit {i} has a width of 0.")
+            return None
+        digits.append(digit_crop)
 
-    Returns:
-        ROI quad coordinates list [[x,y],...], or None if frame not covered
-    """
+    return digits
+
+def get_roi_for_frame(frame_num: int, roi_sections: List[Dict]):
     if not roi_sections:
         return None
 
@@ -27,7 +37,7 @@ def get_roi_for_frame(frame_num: int, roi_sections: List[Dict]) -> Optional[List
         start = section.get('start_frame', 0)
         end = section.get('end_frame', float('inf'))
         if start <= frame_num <= end:
-            return section.get('quad')
+            return (section.get('quad'), section.get('dividers'))
 
     return None
 
@@ -36,15 +46,7 @@ def warp_roi_to_canvas(frame, roi_coords, target_width=CNN_WIDTH, target_height=
     """
     Perspective-warp a quad ROI onto a black canvas of the given size,
     preserving the original aspect ratio and centering horizontally.
-
-    Args:
-        frame: BGR image (numpy array)
-        roi_coords: list of 4 [x, y] points (quad corners)
-        target_width: canvas width  (default: CNN_WIDTH from config)
-        target_height: canvas height (default: CNN_HEIGHT from config)
-
-    Returns:
-        BGR image of shape (target_height, target_width, 3)
+    Returns a BGR image of shape (target_height, target_width, 3)
     """
     if not roi_coords:
         return cv2.resize(frame, (target_width, target_height))
@@ -59,10 +61,11 @@ def warp_roi_to_canvas(frame, roi_coords, target_width=CNN_WIDTH, target_height=
         new_height = target_height
         new_width = max(1, int(aspect_ratio * new_height))
 
-        dst_pts = np.float32([
+        dst_pts = np.array([
             [0, 0], [new_width - 1, 0],
             [new_width - 1, new_height - 1], [0, new_height - 1],
-        ])
+            ], dtype=np.float32
+        )
         M = cv2.getPerspectiveTransform(pts, dst_pts)
         warped = cv2.warpPerspective(frame, M, (new_width, new_height), flags=cv2.INTER_LINEAR)
 
@@ -83,8 +86,6 @@ def warp_roi_to_canvas(frame, roi_coords, target_width=CNN_WIDTH, target_height=
 def apply_clahe(frame, clip_limit=None, grid_size=None):
     """
     Apply CLAHE to a BGR frame, returning a BGR result.
-
-    Uses project-wide defaults from config when parameters are not supplied.
     """
     from core.config import CLAHE_CLIP_LIMIT, CLAHE_GRID_SIZE
 

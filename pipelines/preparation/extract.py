@@ -27,10 +27,12 @@ def extract_frames_for_video(video_path: Path, frames: List[int], roi_sections: 
     frames = sorted(list(set(frames)))
     
     for frame_num in frames:
-        quad = get_roi_for_frame(frame_num, roi_sections)
-        if quad is None:
+        roi_info = get_roi_for_frame(frame_num, roi_sections)
+        if roi_info is None:
             skipped_no_roi += 1
             continue
+        else:
+            quad, _ = roi_info
         
         cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
         ret, frame = cap.read()
