@@ -111,7 +111,6 @@ def get_roi(frame, roi_coords=None):
 
 
 def preprocess_frame(frame, transform):
-    """Preprocess frame for model input with CLAHE enhancement."""
     # Just convert to RGB, as Albumentations expects RGB
     image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     
@@ -240,6 +239,7 @@ def process_video_streaming_batched(video_path, model, transform, roi_sections, 
     frame_num = start_frame
     frames_to_process = range_end - start_frame + 1
     results_by_frame = {int(r['frame_num']): r for r in results}
+    frames_since_checkpoint = 0
     
     print(f"\n{'='*60}")
     print(f"Processing {frames_to_process} frames (batch_size={batch_size})...")
@@ -281,9 +281,26 @@ def process_video_streaming_batched(video_path, model, transform, roi_sections, 
         digit_mapping = []
         pending_frame_nums = []
 
-        if checkpoint_path and checkpoint_every > 0 and last_processed_frame % checkpoint_every == 0:
-            checkpoint_results = [results_by_frame[k] for k in sorted(results_by_frame.keys())]
-            save_checkpoint(checkpoint_path, checkpoint_results, last_processed_frame)
+    def get_last_committed_frame(default_frame):
+        if results_by_frame:
+            return max(results_by_frame.keys())
+        return default_frame
+
+    def save_checkpoint_if_due(current_frame):
+        nonlocal frames_since_checkpoint
+        if not checkpoint_path or checkpoint_every <= 0:
+            return
+        if frames_since_checkpoint < checkpoint_every:
+            return
+
+        # Ensure pending frames are committed before persisting periodic state.
+        if digit_batch:
+            flush_digit_batch(current_frame)
+
+        checkpoint_results = [results_by_frame[k] for k in sorted(results_by_frame.keys())]
+        last_committed_frame = get_last_committed_frame(current_frame)
+        save_checkpoint(checkpoint_path, checkpoint_results, last_committed_frame)
+        frames_since_checkpoint = 0
     
     with tqdm(total=frames_to_process, desc="Processing frames", unit="frame", 
               initial=0, dynamic_ncols=True) as pbar:
@@ -307,9 +324,8 @@ def process_video_streaming_batched(video_path, model, transform, roi_sections, 
                 }
                 no_roi_frames.append(frame_num)
                 pbar.update(1)
-                if checkpoint_path and checkpoint_every > 0 and frame_num % checkpoint_every == 0:
-                    checkpoint_results = [results_by_frame[k] for k in sorted(results_by_frame.keys())]
-                    save_checkpoint(checkpoint_path, checkpoint_results, frame_num)
+                frames_since_checkpoint += 1
+                save_checkpoint_if_due(frame_num)
                 frame_num += 1
                 continue
             else:
@@ -338,10 +354,8 @@ def process_video_streaming_batched(video_path, model, transform, roi_sections, 
                 flush_digit_batch(frame_num)
 
             pbar.update(1)
-
-            if checkpoint_path and checkpoint_every > 0 and frame_num % checkpoint_every == 0:
-                checkpoint_results = [results_by_frame[k] for k in sorted(results_by_frame.keys())]
-                save_checkpoint(checkpoint_path, checkpoint_results, frame_num)
+            frames_since_checkpoint += 1
+            save_checkpoint_if_due(frame_num)
             
             frame_num += 1
     
@@ -356,7 +370,8 @@ def process_video_streaming_batched(video_path, model, transform, roi_sections, 
         print(f"\n  {len(no_roi_frames)} frames had no ROI coverage and were skipped (will be flagged as 'no_roi')")
     
     if checkpoint_path and checkpoint_every > 0:
-        save_checkpoint(checkpoint_path, results, frame_num - 1)
+        last_committed_frame = get_last_committed_frame(frame_num - 1)
+        save_checkpoint(checkpoint_path, results, last_committed_frame)
     
     return results, checkpoint_path
 

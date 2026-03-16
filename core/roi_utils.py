@@ -83,18 +83,20 @@ def warp_roi_to_canvas(frame, roi_coords, target_width=CNN_WIDTH, target_height=
         return cv2.resize(frame, (target_width, target_height))
 
 
-def apply_clahe(image, clip_limit=None, grid_size=None):
+def apply_clahe(image, clip_limit=None, grid_size=None, color_order="bgr", **kwargs):
     """
-    Apply CLAHE using grayscale conversion to match OpenCV inference pipeline.
-    
-    This ensures training uses the exact same CLAHE implementation as inference,
-    avoiding discrepancies from Albumentations' LAB-based CLAHE.
-    
-    Input can be BGR (from video) or RGB (from albumentations).
-    Any input is converted to grayscale, enhanced, and returned as single-channel.
-    
-    Returns: (H, W, 1) grayscale image for single-channel model input 
-    and albumentations compatibility
+    Apply CLAHE to a grayscale projection of an image.
+
+    Args:
+        image: Input image in grayscale (H, W) or color (H, W, 3).
+        clip_limit: CLAHE clip limit override.
+        grid_size: CLAHE tile grid override.
+        color_order: Channel order for 3-channel inputs. One of:
+            - "bgr" for OpenCV frames (default)
+            - "rgb" for Albumentations/dataset path
+
+    Returns:
+        np.ndarray: (H, W, 1) grayscale image for single-channel model input.
     """
     from core.config import CLAHE_CLIP_LIMIT, CLAHE_GRID_SIZE
 
@@ -104,9 +106,26 @@ def apply_clahe(image, clip_limit=None, grid_size=None):
         grid_size = CLAHE_GRID_SIZE
 
     if len(image.shape) == 3 and image.shape[2] == 3:
-        grayscale_image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+        if color_order == "rgb":
+            grayscale_image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+        elif color_order == "bgr":
+            grayscale_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            raise ValueError(f"Unsupported color_order '{color_order}'. Use 'rgb' or 'bgr'.")
     else:
         grayscale_image = image
+
+    # OpenCV CLAHE requires 8-bit single-channel input.
+    if grayscale_image.dtype != np.uint8:
+        if np.issubdtype(grayscale_image.dtype, np.floating):
+            max_val = float(np.nanmax(grayscale_image)) if grayscale_image.size else 0.0
+            min_val = float(np.nanmin(grayscale_image)) if grayscale_image.size else 0.0
+            # Support common float encodings: [0,1] and [0,255].
+            if 0.0 <= min_val and max_val <= 1.0:
+                grayscale_image = (grayscale_image * 255.0).round()
+            grayscale_image = np.clip(grayscale_image, 0.0, 255.0).astype(np.uint8)
+        else:
+            grayscale_image = np.clip(grayscale_image, 0, 255).astype(np.uint8)
     
     clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=grid_size)
     enhanced = clahe.apply(grayscale_image)

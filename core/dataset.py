@@ -15,6 +15,11 @@ from core.config import IMAGE_SIZE
 from core.roi_utils import get_roi_for_frame, slice_roi_into_digits, apply_clahe
 
 
+def apply_clahe_rgb(image: np.ndarray, **kwargs) -> np.ndarray:
+    """Albumentations hook: images arrive in RGB in the dataset/transform path."""
+    return apply_clahe(image, color_order="rgb", **kwargs)
+
+
 def format_weight(weight_str):
     weight_float = float(weight_str)
     new_weight = f"{weight_float:.3f}"
@@ -228,7 +233,7 @@ def get_transforms(image_size=None, is_train=False):
         # CLAHE applied via custom function to match OpenCV inference pipeline
         return A.Compose([ # type: ignore
             # CLAHE using grayscale (matches inference preprocessing exactly)
-            A.Lambda(image=apply_clahe, p=1.0),
+            A.Lambda(image=apply_clahe_rgb, p=1.0),
             
             # augmentation
             A.Affine(scale=(0.85, 1.15), 
@@ -251,7 +256,7 @@ def get_transforms(image_size=None, is_train=False):
     else: 
         return A.Compose([
             # CLAHE using grayscale (matches inference preprocessing exactly)
-            A.Lambda(image=apply_clahe, p=1.0),
+            A.Lambda(image=apply_clahe_rgb, p=1.0),
             
             A.LongestMaxSize(max_size=max(target_width, target_height)),
             A.PadIfNeeded(
