@@ -1,20 +1,20 @@
 # Scale OCR - Video Weight Tool
 
-A machine learning system for automatically reading weight values from seven-segment scale displays in video footage. Uses a CNN+LSTM+CTC architecture trained on labeled frame data.
+A machine learning system for reading weight values from seven-segment scale displays in video footage. The current pipeline trains a per-digit CNN classifier on extracted frame crops, then reconstructs full weight strings like `7.535` from four digit predictions.
 
 ## Overview
 
 This project provides:
-- **Model Training**: Train a CRNN (CNN + Bidirectional LSTM) model with CTC loss to recognize weight values like "7.535" from scale display images
-- **Video Inference**: Process videos to extract frame-by-frame weight readings with temporal smoothing and confidence scoring
-- **labelling Tools**: GUI applications to efficiently label training data from video frames
-- **Data Pipeline**: Scripts to extract frames, split datasets, and validate models
+- **Model Training**: Train a digit-classification CNN that predicts each of the four scale digits independently
+- **Video Inference**: Process videos to extract frame-by-frame weight readings with temporal smoothing, confidence scoring, and optional flagged-frame review signals
+- **Labelling Tools**: PyQt applications for ROI setup, batch labelling, and manual video editing
+- **Data Pipeline**: Scripts to extract frames, split datasets, evaluate checkpoints, and maintain datasets
 
 ## Requirements
 
 - Python 3.8–3.12 (recommended: 3.11 or 3.12)
 - CUDA-capable GPU (recommended for training)
-- ffmpeg (system installation required)
+- ffmpeg (system installation required for the manual video editing workflow)
 
 ## Installation
 
@@ -49,17 +49,18 @@ pip install -r requirements.txt
 
 ```
 VideoWeightTool/
-├── video_weight_tool.py     # Master TUI Entry Point 
+├── video_weight_tool.py     # Master terminal menu entry point
 ├── requirements.txt
 │
 ├── core/                    # Shared Library Code
-│   ├── model.py             # Neural Network Architecture
-│   ├── dataset.py           # Data Loading Logic
+│   ├── model.py             # Digit CNN classifier
+│   ├── dataset.py           # Digit dataset + transforms
 │   └── config.py            # Unified Configuration
 │
 ├── pipelines/               # Automated Processing Scripts
 │   ├── train.py             # Model training script
-│   ├── inference.py         # Run model on meaningful video
+│   ├── inference.py         # Run inference on video
+│   ├── evaluate.py          # Validation/test evaluation
 │   └── preparation/         # Extract frames, Split data
 │
 ├── workflows/               # GUI Applications (Human-in-the-Loop)
@@ -67,32 +68,35 @@ VideoWeightTool/
 │   └── manual/              # Manual crop/edit tool
 │
 ├── data/                    # Data Storage
+│   ├── all_data.csv         # Raw frame-level labels from labelling workflow
+│   ├── metadata.json        # ROI sections and divider metadata
 │   ├── images/              # Extracted training images
-│   ├── labels/              # CSV labels
+│   ├── labels/              # Train/val/test split CSVs
 │   ├── raw_videos/          # Place your MP4s here
 │   └── models/              # Saved Checkpoints
 ```
 
 ## Workflow
 
-**Recommendation:** Run `./video_weight_tool.py` for an interactive menu guiding you through all steps.
+**Recommendation:** Run `python video_weight_tool.py` for an interactive menu that launches the main workflows.
 
 ### 1. Label Training Data
 
-Launch the key labelling tool via the TUI (Option 1) or directly:
+Launch the main labelling tool via the menu (`Labelling & Data Entry`) or directly:
 
 ```bash
 python workflows/labelling/main.py
 ```
 
 This updates:
-- `data/labels/all_data.csv`
+- `data/all_data.csv`
 - `data/metadata.json`
 
 ### 2. Prepare Dataset
 
-After labelling, you must extract frames and split the dataset.
-**Via TUI:** Option 2 -> 1 (Extract), then Option 2 -> 2 (Split).
+After labelling, extract frames and then split the dataset.
+
+**Via menu:** `Data Processing Pipelines` -> `Extract Frames from Videos`, then `Split Dataset`
 
 **Via CLI:**
 ```bash
@@ -100,14 +104,21 @@ python pipelines/preparation/extract.py
 python pipelines/preparation/split.py
 ```
 
+This produces:
+- `data/images/`
+- `data/labels/train_labels.csv`
+- `data/labels/val_labels.csv`
+- `data/labels/test_labels.csv`
+
 ### 3. Train Model
 
-Train the Scale OCR model:
-**Via TUI:** Option 3 -> 1 (Extract).
+Train the digit classifier:
+
+**Via menu:** `Training & Inference` -> `Train New Model`
 
 **Via CLI:**
 ```bash
-python train.py
+python pipelines/train.py
 ```
 
 **Monitoring:**
@@ -117,15 +128,35 @@ tensorboard --logdir runs
 ```
 Open the URL (http://localhost:6006) in your browser.
 
-Arguments match standard PyTorch patterns (see `python train.py --help`).
+Key outputs:
+- `data/models/latest_model.pth`
+- `data/models/best_model.pth`
+- `data/models/best_accuracy_model.pth`
+- `runs/` TensorBoard logs
+
+Arguments match standard PyTorch patterns. See:
+```bash
+python pipelines/train.py --help
+```
+
+You can resume from a checkpoint:
+```bash
+python pipelines/train.py --resume data/models/latest_model.pth
+```
+
+You can disable AMP if needed:
+```bash
+python pipelines/train.py --no-amp
+```
 
 ### 4. Run Inference
 
 Process new videos to extract weight readings:
 
+**Via menu:** `Training & Inference` -> `Run Inference on Video`
+
+**Via CLI:**
 ```bash
-# Via TUI: Option 3, then 2
-# Via CLI:
 python pipelines/inference.py --video path/to/video.mp4 --output weights.csv
 ```
 
@@ -135,7 +166,7 @@ Options:
 # Manually specify ROI (8 comma-separated quad points: x1,y1,x2,y2,x3,y3,x4,y4)
 python pipelines/inference.py --video video.mp4 --roi 100,50,400,50,400,150,100,150
 
-# Use conservative mode (flags uncertain predictions)
+# Use conservative mode (flag uncertain predictions more aggressively)
 python pipelines/inference.py --video video.mp4 --conservative
 
 # Compare against ground-truth
@@ -145,29 +176,56 @@ python pipelines/inference.py --video video.mp4 --ground-truth gt.csv
 python pipelines/inference.py --video video.mp4 --save-video
 ```
 
+If `--roi` is omitted, inference attempts to load ROI sections from `data/metadata.json` for the input video.
+
+### 5. Evaluate a Checkpoint
+
+Run evaluation on the validation split:
+
+```bash
+python pipelines/evaluate.py
+```
+
+Run the final test audit:
+
+```bash
+python pipelines/evaluate.py --test
+```
+
 ## Model Architecture
 
-The model uses a CRNN (Convolutional Recurrent Neural Network) architecture:
+The current model is a digit classifier, not a CRNN/CTC sequence model.
 
-1. **CNN Backbone**: 6 convolutional layers extract visual features from 64×256 input images
-2. **Bidirectional LSTM**: 2-layer LSTM reads features as a sequence
-3. **CTC Decoder**: Connectionist Temporal Classification decodes the output to weight strings
+1. **ROI warping**: ROI metadata defines a quadrilateral section of the scale display per video segment.
+2. **Digit slicing**: Each ROI is split into four digit crops using divider coordinates.
+3. **CNN Backbone**: A compact convolutional network processes each grayscale digit crop.
+4. **Classifier head**: A linear head predicts one of 10 digit classes for each crop.
+5. **Weight reconstruction**: Four digit predictions are assembled into the final `X.XXX` string.
 
-Output format: `"X.XXX"` (e.g., "7.535", "12.450")
+Output format: `X.XXX` (for example `7.535`)
 
-## labelling Tools
+## Labelling Tools
 
 ### Labelling Workflow (Recommended)
-Batch labelling tool with smart frame sampling, zoom/pan, and keyboard shortcuts. Use if you want to label frames for use in training a model.
+Batch labelling tool with smart frame sampling, zoom/pan, ROI setup, and keyboard shortcuts. Use this to create `data/all_data.csv` and `data/metadata.json`.
+
 ```bash
 cd workflows/labelling && python main.py
 ```
 
 ### Manual Workflow
-Video editing tool with crop, trim, brightness/contrast adjustments. Use if you want to manually label frames and save edits made to videos.
+Video editing tool with crop, trim, brightness/contrast adjustments, and ffmpeg-based export.
+
 ```bash
 cd workflows/manual && python main.py
 ```
+
+## Maintenance Scripts
+
+Additional utilities live under `pipelines/maintenance/`:
+- `cleanup.py`: Remove CSV entries that reference missing files
+- `stats.py`: Inspect dataset/image statistics
+- `create_digit_heatmap.py`: Generate label distribution heatmaps
 
 ## Troubleshooting
 
@@ -177,11 +235,12 @@ pip install --only-binary=numpy -r requirements.txt
 ```
 
 ### CUDA out of memory
-Reduce `batch_size` in `train.py` (try 8 or 16).
+Reduce `--batch-size` in `pipelines/train.py` (try 8 or 16).
 
 ### Python 3.13+
 Some packages may not have pre-built wheels. Use Python 3.11 or 3.12 instead.
 
-## License
+## Notes
 
-[MIT](https://choosealicense.com/licenses/mit/)
+- `ffmpeg-python` is a Python wrapper, but the `ffmpeg` binary must also be installed and available on `PATH` for the manual editing workflow.
+- The GUI workflows require a desktop environment because they use PyQt5.
