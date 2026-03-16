@@ -83,9 +83,18 @@ def warp_roi_to_canvas(frame, roi_coords, target_width=CNN_WIDTH, target_height=
         return cv2.resize(frame, (target_width, target_height))
 
 
-def apply_clahe(frame, clip_limit=None, grid_size=None):
+def apply_clahe(image, clip_limit=None, grid_size=None):
     """
-    Apply CLAHE to a BGR frame, returning a BGR result.
+    Apply CLAHE using grayscale conversion to match OpenCV inference pipeline.
+    
+    This ensures training uses the exact same CLAHE implementation as inference,
+    avoiding discrepancies from Albumentations' LAB-based CLAHE.
+    
+    Input can be BGR (from video) or RGB (from albumentations).
+    Any input is converted to grayscale, enhanced, and returned as single-channel.
+    
+    Returns: (H, W, 1) grayscale image for single-channel model input 
+    and albumentations compatibility
     """
     from core.config import CLAHE_CLIP_LIMIT, CLAHE_GRID_SIZE
 
@@ -94,7 +103,12 @@ def apply_clahe(frame, clip_limit=None, grid_size=None):
     if grid_size is None:
         grid_size = CLAHE_GRID_SIZE
 
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    if len(image.shape) == 3 and image.shape[2] == 3:
+        grayscale_image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    else:
+        grayscale_image = image
+    
     clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=grid_size)
-    enhanced = clahe.apply(gray)
-    return cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
+    enhanced = clahe.apply(grayscale_image)
+    
+    return enhanced[:, :, np.newaxis]

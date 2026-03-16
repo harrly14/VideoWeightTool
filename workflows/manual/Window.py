@@ -306,7 +306,10 @@ class EditWindow(QWidget):
 
     def apply_clahe(self, frame):
         from core.roi_utils import apply_clahe
-        return apply_clahe(frame)
+        # apply_clahe returns single-channel (H, W, 1), convert back to 3-channel BGR for display
+        single_channel = apply_clahe(frame)
+        grayscale_2d = single_channel[:, :, 0]  # Extract (H, W) from (H, W, 1)
+        return cv2.cvtColor(grayscale_2d, cv2.COLOR_GRAY2BGR)
 
     def reset_slider(self, param_name):
         default_val = self.video_params.get_default_value(param_name)

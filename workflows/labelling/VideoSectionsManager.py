@@ -291,7 +291,9 @@ class VideoSectionsManager(QDialog):
                 roi_quad = section['quad']
                 if raw_frame is not None and roi_quad:
                     warped = warp_roi_to_canvas(raw_frame, roi_quad, CNN_WIDTH, CNN_HEIGHT)
-                    clahe_warped = apply_clahe(warped)
+                    clahe_result = apply_clahe(warped)
+                    # apply_clahe returns single-channel (H, W, 1), convert back to 3-channel BGR for DividerDialog
+                    clahe_warped = cv2.cvtColor(clahe_result[:, :, 0], cv2.COLOR_GRAY2BGR)
                     
                     divider_dialog = DividerDialog(
                         clahe_warped,

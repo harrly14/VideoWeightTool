@@ -12,28 +12,8 @@ from functools import partial
 import torch.nn.functional as F
 
 from core.config import IMAGE_SIZE
-from core.roi_utils import get_roi_for_frame, slice_roi_into_digits
+from core.roi_utils import get_roi_for_frame, slice_roi_into_digits, apply_clahe
 
-
-def apply_clahe_grayscale(image: np.ndarray, **kwargs) -> np.ndarray: # do i need this? roi_utils has apply_clahe
-    """
-    Apply CLAHE using grayscale conversion to match OpenCV inference pipeline.
-    
-    This ensures training uses the exact same CLAHE implementation as inference
-    (process_video.py), avoiding discrepancies from Albumentations' LAB-based CLAHE.
-    
-    Pipeline: RGB -> Grayscale -> CLAHE -> single channel output
-    Returns: (H, W, 1) grayscale image for single-channel model input
-    """
-    from core.config import CLAHE_CLIP_LIMIT, CLAHE_GRID_SIZE
-
-    grayscale_image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-    
-    clahe = cv2.createCLAHE(clipLimit=CLAHE_CLIP_LIMIT, tileGridSize=CLAHE_GRID_SIZE)
-    enhanced = clahe.apply(grayscale_image)
-    
-    # Return as (H, W, 1) for albumentations compatibility
-    return enhanced[:, :, np.newaxis]
 
 def format_weight(weight_str):
     weight_float = float(weight_str)
@@ -248,7 +228,7 @@ def get_transforms(image_size=None, is_train=False):
         # CLAHE applied via custom function to match OpenCV inference pipeline
         return A.Compose([ # type: ignore
             # CLAHE using grayscale (matches inference preprocessing exactly)
-            A.Lambda(image=apply_clahe_grayscale, p=1.0),
+            A.Lambda(image=apply_clahe, p=1.0),
             
             # augmentation
             A.Affine(scale=(0.85, 1.15), 
@@ -271,7 +251,7 @@ def get_transforms(image_size=None, is_train=False):
     else: 
         return A.Compose([
             # CLAHE using grayscale (matches inference preprocessing exactly)
-            A.Lambda(image=apply_clahe_grayscale, p=1.0),
+            A.Lambda(image=apply_clahe, p=1.0),
             
             A.LongestMaxSize(max_size=max(target_width, target_height)),
             A.PadIfNeeded(

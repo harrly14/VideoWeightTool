@@ -298,7 +298,11 @@ class ROISelectionDialog(QDialog):
             self.preview_button.setText("CLAHE: Off")
 
     def apply_clahe(self, frame):
-        return _apply_clahe(frame)
+        # _apply_clahe returns single-channel (H, W, 1) for training
+        # Convert back to 3-channel BGR for display compatibility with warp_roi_to_canvas
+        single_channel = _apply_clahe(frame)
+        grayscale_2d = single_channel[:, :, 0]  # Extract (H, W) from (H, W, 1)
+        return cv2.cvtColor(grayscale_2d, cv2.COLOR_GRAY2BGR)
 
     def update_display_frame(self):
         if self.current_raw_frame is None:
