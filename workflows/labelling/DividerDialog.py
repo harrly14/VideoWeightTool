@@ -4,6 +4,7 @@ to partition the digit display into four regions (ones, tenths, hundredths, thou
 """
 
 import cv2
+import sys
 import numpy as np
 from typing import Optional, List
 from PyQt5.QtWidgets import (
@@ -22,6 +23,29 @@ MIN_DIVIDER_SPACING = 3
 GRAB_RADIUS = 10
 
 DEFAULT_SCALE = 3
+DECIMAL_PAIR_GAP_PX = 8
+
+
+def _build_default_dividers(source_width: int) -> List[int]:
+    """Build default divider positions with a tight pair around the first step."""
+    step = source_width / (NUM_DIVIDERS + 1)
+
+    if NUM_DIVIDERS < 2:
+        return [int(round((i + 1) * step)) for i in range(NUM_DIVIDERS)]
+
+    pair_center = step
+    half_gap = DECIMAL_PAIR_GAP_PX / 2.0
+
+    dividers = [
+        int(round(pair_center - half_gap)),
+        int(round(pair_center + half_gap)),
+    ]
+
+    # Remaining dividers continue at regular step anchors.
+    for i in range(2, NUM_DIVIDERS):
+        dividers.append(int(round(i * step)))
+
+    return dividers
 
 
 class DividerCanvas(QWidget):
@@ -52,9 +76,25 @@ class DividerCanvas(QWidget):
         if default_dividers and len(default_dividers) == NUM_DIVIDERS:
             self.dividers = sorted(list(default_dividers))
         else:
-            # default (evenly spaced) dividers
+            # default divider positions. 
+            # place first two dividers 8px apart (around decimal point)
+            # then place the rest at regular intervals
             step = self.source_width / (NUM_DIVIDERS + 1)
-            self.dividers = [int(round(i * step)) for i in range(1, NUM_DIVIDERS + 1)]
+
+            if NUM_DIVIDERS < 2:
+                print("Too few dividers. Cannot place default dividers.")
+                sys.exit()
+
+            pair_center = step
+            half_gap = DECIMAL_PAIR_GAP_PX / 2.0
+
+            dividers = [
+                int(round(pair_center - half_gap)),
+                int(round(pair_center + half_gap)),
+            ]
+
+            for i in range(2, NUM_DIVIDERS):
+                dividers.append(int(round(i * step)))
 
         self._clamp_dividers()
 
@@ -272,8 +312,7 @@ class DividerDialog(QDialog):
         self.setLayout(layout)
 
     def _reset_dividers(self):
-        step = self.canvas.source_width / (NUM_DIVIDERS + 1)
-        self.canvas.dividers = [int(round(i * step)) for i in range(1, NUM_DIVIDERS + 1)]
+        self.canvas.dividers = _build_default_dividers(self.canvas.source_width)
         self.canvas._clamp_dividers()
         self.canvas.update()
 
