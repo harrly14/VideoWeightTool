@@ -19,6 +19,7 @@ def slice_roi_into_digits(canvas, dividers):
 
     digits = []
     for i in range(len(boundaries) - 1):
+        if i == 1: continue # skip the decimal point
         x_start = max(0,boundaries[i])
         x_end = min(width, boundaries[i+1])
         digit_crop = canvas[:, x_start:x_end]

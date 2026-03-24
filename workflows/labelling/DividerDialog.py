@@ -26,28 +26,6 @@ DEFAULT_SCALE = 3
 DECIMAL_PAIR_GAP_PX = 8
 
 
-def _build_default_dividers(source_width: int) -> List[int]:
-    """Build default divider positions with a tight pair around the first step."""
-    step = source_width / (NUM_DIVIDERS + 1)
-
-    if NUM_DIVIDERS < 2:
-        return [int(round((i + 1) * step)) for i in range(NUM_DIVIDERS)]
-
-    pair_center = step
-    half_gap = DECIMAL_PAIR_GAP_PX / 2.0
-
-    dividers = [
-        int(round(pair_center - half_gap)),
-        int(round(pair_center + half_gap)),
-    ]
-
-    # Remaining dividers continue at regular step anchors.
-    for i in range(2, NUM_DIVIDERS):
-        dividers.append(int(round(i * step)))
-
-    return dividers
-
-
 class DividerCanvas(QWidget):
     """
     Custom widget that displays a warped ROI image and allows the user
