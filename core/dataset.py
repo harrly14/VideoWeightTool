@@ -115,7 +115,7 @@ class ScaleDigitDataset(Dataset):
         invalid_crops = []
 
         for row in self.labels_df.itertuples(index=True):
-            i = row.index
+            i = row.Index
             filename = f"{row.filename}_{row.frame_number}{self.file_extension}"
             img_path = self.images_dir / filename
 
@@ -134,13 +134,14 @@ class ScaleDigitDataset(Dataset):
                 continue
 
             slot_idx = int(row.slot_index)
-            if slot_idx >= len(digit_crops) or digit_crops[slot_idx] == 0:
+            crop = digit_crops[slot_idx] if slot_idx < len(digit_crops) else None
+            if crop is None or (isinstance(crop, np.ndarray) and crop.size == 0):
                 invalid_crops.append((i, filename, f'invalid slot {slot_idx}'))
 
         if missing_files or invalid_crops:
             bad_indices = {i for i, _ in missing_files}
             bad_indices.update(i for i,_,_ in invalid_crops)
-            self.labels_dfdf = self.labels_df.drop(index=list(bad_indices)).reset_index(drop=True)
+            self.labels_df = self.labels_df.drop(index=list(bad_indices)).reset_index(drop=True)
 
         if len(self.labels_df) <= 0:
             raise ValueError('No samples remain after validation')

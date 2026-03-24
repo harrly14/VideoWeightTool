@@ -9,6 +9,7 @@ import signal
 import sys
 import os
 import argparse
+import importlib.util
 from torch.utils.tensorboard import SummaryWriter
 import torchvision.utils as vutils
 import random
@@ -60,6 +61,18 @@ def seed_everything(seed=42):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
+
+def can_enable_torch_compile(device: torch.device):
+    """Return whether torch.compile should be attempted in this runtime."""
+    if not hasattr(torch, 'compile'):
+        return False, "torch.compile not available in this PyTorch build"
+
+    # CUDA compile path uses inductor/triton; skip if Triton is not present.
+    if device.type == 'cuda' and importlib.util.find_spec('triton') is None:
+        return False, "Triton is not installed for CUDA backend"
+
+    return True, ""
+
 class SignalHandler:
     """
     Handles SIGINT (Ctrl+C) to allow for graceful shutdown.
@@ -85,7 +98,7 @@ class SignalHandler:
         print("="*60 + "\n")
         self.received_signal = True
 
-def train_one_epoch(model, train_loader, criterion, optimizer, device, epoch, scaler=None):
+def train_one_epoch(model, train_loader, criterion, optimizer, device, epoch, scaler=None, log_every=50):
     model.train()
     
     num_batches = len(train_loader)
@@ -117,16 +130,24 @@ def train_one_epoch(model, train_loader, criterion, optimizer, device, epoch, sc
         total_loss += loss.item()
         total_acc += batch_acc.item()
 
-        if (batch_idx + 1) % 10 == 0:
+        if (batch_idx + 1) % log_every == 0 or (batch_idx + 1) == num_batches:
             now = time.time()
             interval = now - last_log_time
-            speed = 10 / interval
-            print(f"  Epoch [{epoch}] Batch [{batch_idx+1}/{num_batches}] "
-                  f"Loss: {loss.item():.4f} Acc: {batch_acc.item():.2%} Speed: {speed:.1f} it/s")
+            batches_since_log = log_every if (batch_idx + 1) % log_every == 0 else ((batch_idx + 1) % log_every)
+            speed = batches_since_log / interval if interval > 0 else 0.0
+            progress_pct = ((batch_idx + 1) / num_batches) * 100 if num_batches > 0 else 0.0
+            print(
+                f"\r  Epoch {epoch:>3} | {batch_idx+1:>4}/{num_batches:<4} "
+                f"({progress_pct:5.1f}%) | loss {loss.item():.4f} "
+                f"| acc {batch_acc.item():6.2%} | {speed:5.1f} it/s",
+                end="",
+                flush=True,
+            )
             last_log_time = now
     
     avg_loss = total_loss / num_batches if num_batches > 0 else 0
     avg_acc = total_acc / num_batches if num_batches > 0 else 0
+    print()
     print(f"  Train Summary -> Loss: {avg_loss:.4f} | Acc: {avg_acc:.2%}")
     return avg_loss, avg_acc
     return avg_loss, avg_acc
@@ -248,7 +269,8 @@ def train_model(
     resume_from=None,
     use_amp=True,
     seed=42,
-    run_name=None
+    run_name=None,
+    log_every_batches=50
 ):
     """
     Main training function
@@ -264,6 +286,7 @@ def train_model(
         use_amp: Whether to use automatic mixed precision
         seed: Random seed for reproducibility
         run_name: Name for the run (tensorboard logging)
+        log_every_batches: Print progress every N batches (single-line, in-place)
     """
     seed_everything(seed)
     signal_handler = SignalHandler()
@@ -323,12 +346,25 @@ def train_model(
     except Exception as e:
         print(f"Warning: Failed to add graph to TensorBoard: {e}")
 
-    if hasattr(torch, 'compile'):
+    should_compile, compile_reason = can_enable_torch_compile(device)
+    if should_compile:
+        eager_model = model
         try:
             print("Attempting to compile model with torch.compile()...")
-            model = torch.compile(model)
-        except:
-            print(f"torch.compile() skipped.")
+            compiled_model = torch.compile(model)
+
+            # Force backend compilation now so we fail fast and can gracefully fallback.
+            with torch.no_grad():
+                warmup = torch.zeros(1, 1, image_size[1], image_size[0], device=device)
+                _ = compiled_model(warmup)
+
+            model = compiled_model
+            print("torch.compile() enabled.")
+        except Exception as e:
+            model = eager_model
+            print(f"torch.compile() disabled, falling back to eager mode: {e}")
+    else:
+        print(f"torch.compile() skipped: {compile_reason}")
     
     # Calculate class weights for imbalance from train dataset
     train_digits = train_dataset.labels_df['digit_label'].astype(int)
@@ -410,7 +446,8 @@ def train_model(
 
             train_loss, train_acc = train_one_epoch(
                     model, train_loader, criterion, optimizer, device, epoch+1,
-                    scaler=scaler
+                    scaler=scaler,
+                    log_every=log_every_batches,
             )
             
             if signal_handler.received_signal:
@@ -478,6 +515,7 @@ if __name__ == "__main__":
     parser.add_argument('--no-amp', action='store_true', help='Disable mixed precision training')
     parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility')
     parser.add_argument('--run-name', type=str, default=None, help='Name for TensorBoard run')
+    parser.add_argument('--log-every', type=int, default=50, help='Print progress every N batches')
     
     args = parser.parse_args()
 
@@ -490,5 +528,6 @@ if __name__ == "__main__":
         resume_from=args.resume,
         use_amp=not args.no_amp,
         seed=args.seed,
-        run_name=args.run_name
+        run_name=args.run_name,
+        log_every_batches=max(1, args.log_every),
     )
