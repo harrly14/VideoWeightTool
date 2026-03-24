@@ -227,10 +227,9 @@ def digit_collate_fn(batch):
 def get_transforms(image_size=None, is_train=False):
     if image_size is None:
         image_size = IMAGE_SIZE
-    target_width, target_height = image_size
     
     if is_train:
-        # augmentation + resizing w padding
+        # augmentation only (batch-level right padding is done in digit_collate_fn)
         # CLAHE applied via custom function to match OpenCV inference pipeline
         return A.Compose([ # type: ignore
             # CLAHE using grayscale (matches inference preprocessing exactly)
@@ -251,24 +250,11 @@ def get_transforms(image_size=None, is_train=False):
             
             # Single channel grayscale normalization
             A.Normalize(mean=(0.5,), std=(0.5,)),
-            
             ToTensorV2(),
         ])
     else: 
         return A.Compose([
-            # CLAHE using grayscale (matches inference preprocessing exactly)
             A.Lambda(image=apply_clahe_rgb, p=1.0),
-            
-            A.LongestMaxSize(max_size=max(target_width, target_height)),
-            A.PadIfNeeded(
-                min_height=target_height,
-                min_width=target_width,
-                border_mode=cv2.BORDER_CONSTANT,
-                fill=0,
-                position='center'
-            ),
-            A.CenterCrop(height=target_height, width=target_width),
-            # Single channel grayscale normalization
             A.Normalize(mean=(0.5,), std=(0.5,)),
             ToTensorV2(),
         ])
