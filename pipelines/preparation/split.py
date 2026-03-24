@@ -33,9 +33,13 @@ def check_erratic_fluctuations(df, threshold=0.4, n=10):
         return flagged.drop(columns=['abs_diff'])
     return None
 
-def validate_format(df, min_val=6, max_val=8, n=10):
+def validate_format(df, min_val=6, max_val=8, n=10, weight_raw=None):
     pattern = re.compile(r'^\d\.\d{3}$')
-    weight_as_str = df['weight'].astype(str)
+    if weight_raw is not None:
+        weight_as_str = pd.Series(weight_raw).astype(str).str.strip()
+    else:
+        numeric_for_format = pd.to_numeric(df['weight'], errors='coerce')
+        weight_as_str = numeric_for_format.map(lambda x: f"{x:.3f}" if pd.notna(x) else "")
     in_format = weight_as_str.str.match(pattern)
     numeric_weight = pd.to_numeric(df['weight'], errors='coerce')
     in_range = numeric_weight.between(min_val, max_val)
@@ -579,7 +583,7 @@ if __name__ == "__main__":
     output_path = Path(args.output_dir)
 
     print(f"Reading {csv_path}...")
-    df = pd.read_csv(csv_path)
+    df = pd.read_csv(csv_path, dtype={'weight': 'string'})
 
     expected_columns = ['filename','frame_number','weight']
     actual_columns = df.columns.tolist()
@@ -590,6 +594,9 @@ if __name__ == "__main__":
         print(f"Actual columns: {actual_columns}")
         print("CSV columns must match the expected columns exactly. Exiting...")
         sys.exit()
+
+    weight_raw = df['weight'].copy()
+    df['weight'] = pd.to_numeric(df['weight'], errors='coerce')
 
     n = len(df)
     print(f"Total samples: {n}")
@@ -617,6 +624,7 @@ if __name__ == "__main__":
         min_val=args.min_weight,
         max_val=args.max_weight,
         n=args.display_rows,
+        weight_raw=weight_raw,
     )
     if invalid_rows is not None:
         invalid_rows['flag_reason'] = 'invalid format/out of range'
