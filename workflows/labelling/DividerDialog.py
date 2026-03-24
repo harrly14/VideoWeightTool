@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtGui import QImage, QPixmap, QPainter, QPen, QColor
 from PyQt5.QtCore import Qt, QPoint
 
-from core.config import CNN_WIDTH, CNN_HEIGHT
+from core.config import CNN_WIDTH, CNN_HEIGHT, NUM_DIVIDERS
 
 DIVIDER_COLOR = QColor(0, 255, 0)
 DIVIDER_COLOR_ALPHA = QColor(0, 255, 0, 120)
@@ -34,7 +34,7 @@ class DividerCanvas(QWidget):
         """
         Args:
             bgr_image: The warped CLAHE image in BGR format, shape (CNN_HEIGHT, CNN_WIDTH, 3).
-            default_dividers: Optional list of 3 x-coordinates in canvas space (0..CNN_WIDTH).
+            default_dividers: Optional list of NUM_DIVIDERS x-coordinates in canvas space (0..CNN_WIDTH).
         """
         super().__init__(parent)
 
@@ -49,16 +49,12 @@ class DividerCanvas(QWidget):
         )
 
         # Divider positions in source (canvas) coordinates
-        if default_dividers and len(default_dividers) == 3:
+        if default_dividers and len(default_dividers) == NUM_DIVIDERS:
             self.dividers = sorted(list(default_dividers))
         else:
-            # Evenly spaced defaults: 1/4, 1/2, 3/4 of CNN_WIDTH
-            quarter = self.source_width / 4
-            self.dividers = [
-                int(round(quarter)),
-                int(round(2 * quarter)),
-                int(round(3 * quarter)),
-            ]
+            # default (evenly spaced) dividers
+            step = self.source_width / (NUM_DIVIDERS + 1)
+            self.dividers = [int(round(i * step)) for i in range(1, NUM_DIVIDERS + 1)]
 
         self._clamp_dividers()
 
@@ -98,18 +94,18 @@ class DividerCanvas(QWidget):
     def _clamp_dividers(self):
         """Enforce ordering, bounds and minimum spacing."""
         # Clamp to valid range
-        for i in range(3):
+        for i in range(NUM_DIVIDERS):
             self.dividers[i] = max(MIN_DIVIDER_SPACING,
                                    min(self.source_width - MIN_DIVIDER_SPACING,
                                        self.dividers[i]))
-        # Sort
         self.dividers.sort()
+
         # Enforce minimum spacing
-        for i in range(1, 3):
+        for i in range(1, NUM_DIVIDERS):
             if self.dividers[i] - self.dividers[i - 1] < MIN_DIVIDER_SPACING:
                 self.dividers[i] = self.dividers[i - 1] + MIN_DIVIDER_SPACING
         # Final bounds check after spacing push
-        for i in range(3):
+        for i in range(NUM_DIVIDERS):
             self.dividers[i] = max(MIN_DIVIDER_SPACING,
                                    min(self.source_width - MIN_DIVIDER_SPACING,
                                        self.dividers[i]))
@@ -183,7 +179,7 @@ class DividerCanvas(QWidget):
 
             if idx > 0:
                 left_bound = self.dividers[idx - 1] + MIN_DIVIDER_SPACING
-            if idx < 2:
+            if idx < NUM_DIVIDERS - 1:
                 right_bound = self.dividers[idx + 1] - MIN_DIVIDER_SPACING
 
             new_sx = max(left_bound, min(right_bound, new_sx))
@@ -242,7 +238,7 @@ class DividerDialog(QDialog):
         layout = QVBoxLayout()
 
         instructions = QLabel(
-            "Drag the three green dividers to separate the four digit regions "
+            "Drag the four green dividers to separate the four digit regions and the decimal point"
             "(ones | tenths | hundredths | thousandths)."
         )
         instructions.setWordWrap(True)
@@ -276,16 +272,10 @@ class DividerDialog(QDialog):
         self.setLayout(layout)
 
     def _reset_dividers(self):
-        """Reset dividers to evenly spaced positions."""
-        quarter = self.canvas.source_width / 4
-        self.canvas.dividers = [
-            int(round(quarter)),
-            int(round(2 * quarter)),
-            int(round(3 * quarter)),
-        ]
+        step = self.canvas.source_width / (NUM_DIVIDERS + 1)
+        self.canvas.dividers = [int(round(i * step)) for i in range(1, NUM_DIVIDERS + 1)]
         self.canvas._clamp_dividers()
         self.canvas.update()
 
     def get_dividers(self) -> List[int]:
-        """Return the confirmed divider positions (3 x-coordinates in canvas space)."""
         return self.canvas.get_dividers()

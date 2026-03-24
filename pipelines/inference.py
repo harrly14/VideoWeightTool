@@ -51,7 +51,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 from core.model import create_model
 from core.dataset import get_transforms
-from core.config import CNN_WIDTH, CNN_HEIGHT
+from core.config import CNN_WIDTH, CNN_HEIGHT, NUM_DIVIDERS
 from core.roi_utils import get_roi_for_frame, warp_roi_to_canvas, slice_roi_into_digits
 
 
@@ -786,8 +786,10 @@ def main():
                 dividers = []
                 if args.dividers:
                     div_coords = [int(x) for x in args.dividers.split(',')]
-                    if len(div_coords) != 3:
-                        print(f"Error: --dividers must be exactly 3 comma-separated integers, got {len(div_coords)}")
+                    if len(div_coords) != NUM_DIVIDERS:
+                        print(
+                            f"Error: --dividers must be exactly {NUM_DIVIDERS} comma-separated integers, got {len(div_coords)}"
+                        )
                         return 1
                     dividers = sorted(div_coords)
                 roi_sections = [{'quad': roi_quad, 'dividers': dividers, 'start_frame': 0, 'end_frame': float('inf')}]

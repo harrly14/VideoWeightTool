@@ -7,11 +7,11 @@ import numpy as np
 from typing import List, Dict
 
 
-from core.config import CNN_WIDTH, CNN_HEIGHT
+from core.config import CNN_WIDTH, CNN_HEIGHT, NUM_DIVIDERS
 
 
 def slice_roi_into_digits(canvas, dividers):
-    assert len(dividers) == 3
+    assert len(dividers) == NUM_DIVIDERS
     dividers = sorted(dividers) #just in case the user dragged the dividers out of order
     height = canvas.shape[0]
     width = canvas.shape[1]

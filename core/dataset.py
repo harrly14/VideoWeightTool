@@ -11,7 +11,7 @@ from pathlib import Path
 from functools import partial
 import torch.nn.functional as F
 
-from core.config import IMAGE_SIZE
+from core.config import IMAGE_SIZE, NUM_DIVIDERS
 from core.roi_utils import get_roi_for_frame, slice_roi_into_digits, apply_clahe
 
 
@@ -89,7 +89,7 @@ class ScaleDigitDataset(Dataset):
 
             _, dividers = roi_info
 
-            if not isinstance(dividers, list) or len(dividers) != 3:
+            if not isinstance(dividers, list) or len(dividers) != NUM_DIVIDERS:
                 continue
 
             digits = format_weight(weight)

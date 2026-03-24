@@ -4,6 +4,7 @@ IMAGE_SIZE = (CNN_WIDTH, CNN_HEIGHT)
 
 NUM_DIGIT_CLASSES = 10
 NUM_DIGIT_SLOTS = 4
+NUM_DIVIDERS = 4
 
 # CLAHE parameters used in dataset transforms & UI previews
 CLAHE_CLIP_LIMIT = 2.0
