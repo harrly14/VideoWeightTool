@@ -66,13 +66,13 @@ class DividerCanvas(QWidget):
             pair_center = step
             half_gap = DECIMAL_PAIR_GAP_PX / 2.0
 
-            dividers = [
+            self.dividers = [
                 int(round(pair_center - half_gap)),
                 int(round(pair_center + half_gap)),
             ]
 
             for i in range(2, NUM_DIVIDERS):
-                dividers.append(int(round(i * step)))
+                self.dividers.append(int(round(i * step)))
 
         self._clamp_dividers()
 
@@ -275,11 +275,6 @@ class DividerDialog(QDialog):
 
         btn_layout.addStretch()
 
-        self.reset_button = QPushButton("Reset to Even")
-        self.reset_button.setStyleSheet("padding: 8px 16px;")
-        self.reset_button.clicked.connect(self._reset_dividers)
-        btn_layout.addWidget(self.reset_button)
-
         self.confirm_button = QPushButton("Confirm Dividers")
         self.confirm_button.setStyleSheet("background-color: #4a7a4a; color: white; padding: 8px 16px;")
         self.confirm_button.clicked.connect(self.accept)
@@ -288,11 +283,6 @@ class DividerDialog(QDialog):
 
         layout.addLayout(btn_layout)
         self.setLayout(layout)
-
-    def _reset_dividers(self):
-        self.canvas.dividers = _build_default_dividers(self.canvas.source_width)
-        self.canvas._clamp_dividers()
-        self.canvas.update()
 
     def get_dividers(self) -> List[int]:
         return self.canvas.get_dividers()
