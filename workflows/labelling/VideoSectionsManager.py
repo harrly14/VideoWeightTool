@@ -23,6 +23,7 @@ class VideoSectionsManager(QDialog):
     Manager dialog for defining multiple ROI sections for a single video.
     Coordinates the creation of sections and tracks coverage.
     """
+    MIN_SECTION_FRAMES = 3
     
     def __init__(self, video_capture, video_filename: str, 
                  total_frames: int,
@@ -156,10 +157,13 @@ class VideoSectionsManager(QDialog):
         Calculate uncovered frame ranges.
         
         Returns:
-            List of (start, end) tuples for uncovered ranges
+            List of (start, end) tuples for uncovered ranges that are
+            large enough to define a valid section.
         """
         if not self.sections:
-            return [(0, self.total_frames - 1)]
+            if self.total_frames >= self.MIN_SECTION_FRAMES:
+                return [(0, self.total_frames - 1)]
+            return []
         
         # Sort sections by start frame
         sorted_sections = sorted(self.sections, key=lambda s: s['start_frame'])
@@ -174,8 +178,13 @@ class VideoSectionsManager(QDialog):
         
         if current_pos < self.total_frames:
             uncovered.append((current_pos, self.total_frames - 1))
-        
-        return uncovered
+
+        min_span = self.MIN_SECTION_FRAMES
+        return [
+            (start, end)
+            for start, end in uncovered
+            if (end - start + 1) >= min_span
+        ]
     
     def _get_next_available_range(self) -> Optional[Tuple[int, int]]:
         """
