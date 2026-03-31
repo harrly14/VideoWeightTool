@@ -98,7 +98,7 @@ class EditWindow(QWidget):
         self.video_label = RectCropLabel()
         self.video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.video_label.setMinimumSize(400, 200)
-        self.video_label.crop_selected.connect(self.on_crop_selected)
+        self.video_label.warp_changed.connect(self.on_warp_changed)
         video_layout.addWidget(self.video_label)
 
         nav_layout = QHBoxLayout()
@@ -196,11 +196,20 @@ class EditWindow(QWidget):
 
         crop_group = QGroupBox("Crop")
         crop_layout = QVBoxLayout()
-        self.crop_info_label = QLabel("Click and drag on video to select crop area")
+        self.crop_info_label = QLabel("Enable Warp crop, adjust corners, then confirm")
         self.crop_info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.clear_crop_button = QPushButton("Clear crop")
-        self.clear_crop_button.clicked.connect(self.clear_crop)
+
+        self.warp_button = QPushButton("Edit warp crop")
+        self.warp_button.setToolTip("Edit perspective crop corners")
+        self.warp_button.clicked.connect(self.start_warp_crop_edit)
+
+        self.confirm_warp_crop_button = QPushButton("Confirm warp crop")
+        self.confirm_warp_crop_button.clicked.connect(self.confirm_warp_crop)
+        self.clear_crop_button = QPushButton("Reset warped crop")
+        self.clear_crop_button.clicked.connect(self.clear_perspective_warp)
         crop_layout.addWidget(self.crop_info_label)
+        crop_layout.addWidget(self.warp_button)
+        crop_layout.addWidget(self.confirm_warp_crop_button)
         crop_layout.addWidget(self.clear_crop_button)
         crop_group.setLayout(crop_layout)
         controls_layout.addWidget(crop_group)
@@ -339,31 +348,84 @@ class EditWindow(QWidget):
 
         self.update_display_frame()
 
-    def on_crop_selected(self, x, y, w, h):
-        old_crop_coords = self.video_params.crop_coords
-        try:
-            self.video_params.crop_coords = (x, y, w, h)
-            self.video_params.validate()
+    def _default_warp_quad(self):
+        if not hasattr(self, "original_w") or not hasattr(self, "original_h"):
+            return None
+        return [
+            (0, 0),
+            (self.original_w - 1, 0),
+            (self.original_w - 1, self.original_h - 1),
+            (0, self.original_h - 1),
+        ]
 
-            self.crop_info_label.setText("Cropped.")
-            self.video_label.cropping_enabled = False
-            self.update_display_frame()
+    def start_warp_crop_edit(self):
+        # Enter editing mode on the original preview so the user can reshape the quad.
+        self.video_label.set_warp_mode(True)
 
-            self.video_label.crop_start = None
-            self.video_label.crop_end = None
-            self.video_label.update()
-        except ValueError as e:
-            QMessageBox.warning(self, "Invalid parameter", str(e))
-            self.video_params.crop_coords = old_crop_coords
-            
-    def clear_crop(self):
-        self.video_params.crop_coords = None
-        self.crop_info_label.setText("Click and drag on the video to select crop area")
-        self.video_label.crop_start = None
-        self.video_label.crop_end = None
-        self.video_label.cropping_enabled = True
+        self.video_params.warp_enabled = False
+        self.crop_info_label.setText("Adjust corners, then click Confirm warp crop")
+
+        if self.video_params.warp_quad is None:
+            default_quad = self._default_warp_quad()
+            if default_quad is not None:
+                self.video_params.warp_quad = default_quad
+                self.video_label.set_warp_quad(default_quad)
+        else:
+            self.video_label.set_warp_quad(self.video_params.warp_quad)
+
         self.video_label.update()
         self.update_display_frame()
+
+    def on_warp_changed(self, points):
+        if not points:
+            self.video_params.warp_quad = None
+            return
+        normalized = []
+        for point in points:
+            try:
+                normalized.append((int(point[0]), int(point[1])))
+            except (TypeError, ValueError, IndexError):
+                return
+        if len(normalized) != 4:
+            return
+        self.video_params.warp_quad = normalized
+
+    def confirm_warp_crop(self):
+        if not self.video_params.warp_quad or len(self.video_params.warp_quad) != 4:
+            QMessageBox.warning(self, "No warp crop", "Enable Warp crop and position all four corners first.")
+            return
+
+        self.video_params.crop_coords = None
+        self.video_params.warp_enabled = True
+        self.video_label.set_warp_mode(False)
+        self.crop_info_label.setText("Warped crop confirmed")
+        self.update_display_frame()
+
+    def clear_perspective_warp(self):
+        self.video_params.warp_quad = None
+        self.video_params.warp_enabled = False
+        self.video_params.crop_coords = None
+        self.video_label.clear_warp_quad()
+        self.video_label.set_warp_mode(False)
+        self.crop_info_label.setText("Enable Warp crop, adjust corners, then confirm")
+        self.update_display_frame()
+
+    def apply_perspective_warp(self, frame, quad):
+        if frame is None or quad is None or len(quad) != 4:
+            return frame
+        height, width = frame.shape[:2]
+        try:
+            src = np.array(quad, dtype=np.float32)
+            dst = np.array([
+                [0, 0],
+                [width - 1, 0],
+                [width - 1, height - 1],
+                [0, height - 1],
+            ], dtype=np.float32)
+            matrix = cv2.getPerspectiveTransform(src, dst)
+            return cv2.warpPerspective(frame, matrix, (width, height), flags=cv2.INTER_LINEAR)
+        except Exception:
+            return frame
 
     def _update_scrub_to_bounds(self):
         # user-facing frame stuff is 1-indexed instead of 0
@@ -493,6 +555,9 @@ class EditWindow(QWidget):
             frame = self.apply_clahe(frame)
         
         preview_frame = self.apply_preview_effects(frame)
+
+        if self.video_params.warp_enabled and self.video_params.warp_quad:
+            preview_frame = self.apply_perspective_warp(preview_frame, self.video_params.warp_quad)
 
         if self.video_params.crop_coords:
             x, y, w, h = self.video_params.crop_coords

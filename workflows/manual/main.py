@@ -3,6 +3,7 @@ os.environ["OPENCV_FFMPEG_READ_ATTEMPTS"] = str(2**18)
 import csv
 import cv2
 import sys
+import numpy as np
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 import subprocess
 import re
@@ -11,6 +12,115 @@ from datetime import datetime
 from Window import EditWindow
 from core.config import VideoParams
 from PyQt5.QtWidgets import QApplication, QFileDialog, QMessageBox, QProgressDialog
+
+
+def _apply_preview_effects_for_export(frame, video_params):
+    if (video_params.contrast == 100 and
+            video_params.brightness == 0 and
+            video_params.saturation == 100):
+        return frame
+
+    processed = frame.astype(np.float32)
+
+    if video_params.contrast != 100 or video_params.brightness != 0:
+        ycrcb = cv2.cvtColor(processed.astype(np.uint8), cv2.COLOR_BGR2YCrCb).astype(np.float32)
+        contrast_factor = video_params.contrast / 100.0
+        ycrcb[:, :, 0] = (ycrcb[:, :, 0] - 128.0) * contrast_factor + 128.0 + video_params.brightness
+        processed = cv2.cvtColor(np.clip(ycrcb, 0, 255).astype(np.uint8), cv2.COLOR_YCrCb2BGR)
+    else:
+        processed = processed.astype(np.uint8)
+
+    if video_params.saturation != 100:
+        hsv = cv2.cvtColor(processed, cv2.COLOR_BGR2HSV).astype(np.float32)
+        hsv[:, :, 1] = np.clip(hsv[:, :, 1] * (video_params.saturation / 100.0), 0, 255)
+        processed = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+
+    return processed
+
+
+def _apply_perspective_warp_for_export(frame, warp_quad):
+    if frame is None or not warp_quad or len(warp_quad) != 4:
+        return frame
+
+    height, width = frame.shape[:2]
+    src = np.array(warp_quad, dtype=np.float32)
+    dst = np.array([
+        [0, 0],
+        [width - 1, 0],
+        [width - 1, height - 1],
+        [0, height - 1],
+    ], dtype=np.float32)
+    matrix = cv2.getPerspectiveTransform(src, dst)
+    return cv2.warpPerspective(frame, matrix, (width, height), flags=cv2.INTER_LINEAR)
+
+
+def _apply_crop_for_export(frame, crop_coords):
+    if frame is None or not crop_coords:
+        return frame
+
+    x, y, w, h = crop_coords
+    h_max, w_max, _ = frame.shape
+    x = max(0, min(int(x), w_max - 1))
+    y = max(0, min(int(y), h_max - 1))
+    w = max(1, min(int(w), w_max - x))
+    h = max(1, min(int(h), h_max - y))
+    return frame[y:y + h, x:x + w]
+
+
+def _render_video_with_warp(video_path, video_params, output_path, progress_callback=None):
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return False
+
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    if fps <= 0:
+        fps = 30.0
+
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    start_frame = max(0, int(video_params.trim_start))
+    end_frame = int(video_params.trim_end) if video_params.trim_end is not None else total_frames
+    end_frame = max(start_frame + 1, min(end_frame, total_frames))
+    frames_to_process = end_frame - start_frame
+
+    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+    writer = None
+
+    try:
+        for frame_offset in range(frames_to_process):
+            success, frame = cap.read()
+            if not success:
+                break
+
+            processed = _apply_preview_effects_for_export(frame, video_params)
+
+            if video_params.warp_enabled and video_params.warp_quad:
+                processed = _apply_perspective_warp_for_export(processed, video_params.warp_quad)
+
+            if video_params.crop_coords:
+                processed = _apply_crop_for_export(processed, video_params.crop_coords)
+
+            if writer is None:
+                out_h, out_w = processed.shape[:2]
+                fourcc = cv2.VideoWriter.fourcc(*'mp4v')
+                writer = cv2.VideoWriter(output_path, fourcc, fps, (out_w, out_h))
+                if not writer.isOpened():
+                    return False
+
+            writer.write(processed)
+
+            if progress_callback:
+                progress_percent = min(99, int(((frame_offset + 1) / frames_to_process) * 100))
+                should_continue = progress_callback(progress_percent)
+                if not should_continue:
+                    return False
+    finally:
+        cap.release()
+        if writer is not None:
+            writer.release()
+
+    if progress_callback:
+        progress_callback(100)
+    return True
 
 def is_ffmpeg_installed():
     try:
@@ -32,6 +142,25 @@ def apply_edits_and_save(video_path, video_params, output_folder, progress_callb
 
     if progress_callback:
         progress_callback(0)
+
+    if video_params.warp_enabled and video_params.warp_quad:
+        try:
+            success = _render_video_with_warp(video_path, video_params, output_path, progress_callback=progress_callback)
+            if not success:
+                if os.path.exists(output_path):
+                    os.remove(output_path)
+                return None
+
+            base_name = os.path.splitext(os.path.basename(video_path))[0]
+            final_name = f"{base_name}_edited.mp4"
+            final_path = os.path.join(output_folder, final_name)
+            os.replace(output_path, final_path)
+            return final_path
+        except Exception as e:
+            QMessageBox.warning(None, "Error", f"Error processing warped video: {e}")
+            if os.path.exists(output_path):
+                os.remove(output_path)
+            return None
     
     stream = ffmpeg.input(video_path)
     probe = ffmpeg.probe(video_path)
@@ -182,6 +311,7 @@ if __name__ == "__main__":
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
     
     output_dir_made = False
+    output_folder = None
 
     if use_existing_csv == QMessageBox.No: 
         output_parent = QFileDialog.getExistingDirectory(None, "Select an output folder", os.getcwd(),
@@ -246,7 +376,10 @@ if __name__ == "__main__":
                 os.rename(backup_csv, output_csv)
             QMessageBox.warning(None, "Error", f"An error occurred: {e}")
 
-    if ffmpeg_found and updated_params != VideoParams():
+    has_edits = updated_params != VideoParams()
+    can_save_without_ffmpeg = bool(getattr(updated_params, 'warp_enabled', False) and getattr(updated_params, 'warp_quad', None))
+
+    if has_edits and (ffmpeg_found or can_save_without_ffmpeg):
         save_y_n = QMessageBox.question(None, 'Message', 'Would you like  to save the video with your edits?',
                                             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if save_y_n == QMessageBox.Yes:
@@ -264,6 +397,10 @@ if __name__ == "__main__":
 
                     os.makedirs(output_folder, exist_ok=True)
                     output_dir_made = True
+
+                if output_folder is None:
+                    QMessageBox.warning(None, "Error", "No output folder available for saving video edits.")
+                    sys.exit(1)
 
                 progress = QProgressDialog("Processing video...", "Cancel", 0, 100)
                 progress.setWindowTitle("Saving video")
@@ -290,6 +427,8 @@ if __name__ == "__main__":
                     QMessageBox.warning(None, "Failed", "Failed to save the updated video.")
         else: 
             QMessageBox.information(None, "Video not saved", f"Your video edits were not saved.\nYour CSV can be found at:\n {output_csv}")
+    elif has_edits and not ffmpeg_found:
+        QMessageBox.information(None, "Cannot save edited video", f"ffmpeg is required for non-warp edits.\nYour CSV can be found at:\n{output_csv}")
     else: 
         QMessageBox.information(None, "No video changes to save", f"Your CSV can be found at:\n{output_csv}")
 

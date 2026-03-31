@@ -32,6 +32,8 @@ class VideoParams:
         trim_start: int = 0,
         trim_end: int | None = None,
         crop_coords: tuple[int, int, int, int] | None = None, # x, y, w, h
+        warp_quad: list[tuple[int, int]] | None = None,
+        warp_enabled: bool = False,
         # validate() uses ranges:
         # brightness: -255 - 255
         # saturation: 0 - 300
@@ -43,6 +45,8 @@ class VideoParams:
         self.trim_start = trim_start
         self.trim_end = trim_end
         self.crop_coords = crop_coords
+        self.warp_quad = warp_quad
+        self.warp_enabled = warp_enabled
         self.brightness = self._DEFAULTS['brightness'] if brightness is None else brightness
         self.saturation = self._DEFAULTS['saturation'] if saturation is None else saturation
         self.contrast = self._DEFAULTS['contrast'] if contrast is None else contrast
@@ -52,6 +56,7 @@ class VideoParams:
         if not isinstance(other, VideoParams):
             return NotImplemented
         return (self.trim_start == other.trim_start and self.trim_end == other.trim_end and self.crop_coords == other.crop_coords
+            and self.warp_quad == other.warp_quad and self.warp_enabled == other.warp_enabled
                 and self.brightness == other.brightness and self.saturation == other.saturation and self.contrast == other.contrast)            
 
     def validate(self):
@@ -64,6 +69,16 @@ class VideoParams:
                 raise ValueError("crop_coords must be a tuple of four integers")
             if not all(isinstance(x, int) for x in self.crop_coords):
                 raise ValueError("all crop_coords values must be non-negative integers")
+        if self.warp_quad is not None:
+            if not isinstance(self.warp_quad, list) or len(self.warp_quad) != 4:
+                raise ValueError("warp_quad must be a list of four (x, y) points")
+            for point in self.warp_quad:
+                if not isinstance(point, tuple) or len(point) != 2:
+                    raise ValueError("each warp_quad point must be a tuple (x, y)")
+                if not all(isinstance(coord, int) for coord in point):
+                    raise ValueError("warp_quad coordinates must be integers")
+        if not isinstance(self.warp_enabled, bool):
+            raise ValueError("warp_enabled must be a boolean")
         if not (-255 <= self.brightness <= 255):
             raise ValueError("brightness must be between -255 and 255")
         if not (0 <= self.saturation <= 300):
