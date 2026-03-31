@@ -214,7 +214,12 @@ cd workflows/labelling && python main.py
 ```
 
 ### Manual Workflow
-Video editing tool with crop, trim, brightness/contrast adjustments, and ffmpeg-based export.
+Video editing tool with crop, trim, brightness/contrast adjustments, temporal frame averaging preview (pixel-level, odd windows), and ffmpeg/OpenCV export.
+
+Temporal averaging notes:
+- Preview uses centered temporal averaging across neighboring frames, clipped to active trim bounds.
+- Export uses ffmpeg `tmix` with clone-padding and trim alignment for non-warp exports.
+- Warp-enabled exports use the OpenCV rendering path and also apply temporal averaging when enabled.
 
 ```bash
 cd workflows/manual && python main.py

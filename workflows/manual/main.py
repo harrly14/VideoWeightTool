@@ -9,6 +9,7 @@ import subprocess
 import re
 import ffmpeg
 from datetime import datetime
+from collections import OrderedDict
 from Window import EditWindow
 from core.config import VideoParams
 from PyQt5.QtWidgets import QApplication, QFileDialog, QMessageBox, QProgressDialog
@@ -67,6 +68,44 @@ def _apply_crop_for_export(frame, crop_coords):
     return frame[y:y + h, x:x + w]
 
 
+def _get_temporal_indices_for_export(center_index, start_frame, end_frame, window_size):
+    half_window = window_size // 2
+    start_index = max(start_frame, center_index - half_window)
+    end_index = min(end_frame - 1, center_index + half_window)
+    return range(start_index, end_index + 1)
+
+
+def _get_cached_frame_for_export(cap, frame_index, frame_cache, max_cache_size):
+    if frame_index in frame_cache:
+        frame_cache.move_to_end(frame_index)
+        return frame_cache[frame_index]
+
+    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+    success, frame = cap.read()
+    if not success:
+        return None
+
+    frame_cache[frame_index] = frame
+    frame_cache.move_to_end(frame_index)
+    while len(frame_cache) > max_cache_size:
+        frame_cache.popitem(last=False)
+    return frame
+
+
+def _build_temporal_frame_for_export(cap, frame_index, start_frame, end_frame, window_size, frame_cache, max_cache_size=64):
+    frame_list = []
+    for neighbor_index in _get_temporal_indices_for_export(frame_index, start_frame, end_frame, window_size):
+        frame = _get_cached_frame_for_export(cap, neighbor_index, frame_cache, max_cache_size)
+        if frame is not None:
+            frame_list.append(frame.astype(np.float32))
+
+    if not frame_list:
+        return _get_cached_frame_for_export(cap, frame_index, frame_cache, max_cache_size)
+
+    averaged = np.mean(frame_list, axis=0)
+    return np.clip(averaged, 0, 255).astype(np.uint8)
+
+
 def _render_video_with_warp(video_path, video_params, output_path, progress_callback=None):
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -81,15 +120,30 @@ def _render_video_with_warp(video_path, video_params, output_path, progress_call
     end_frame = int(video_params.trim_end) if video_params.trim_end is not None else total_frames
     end_frame = max(start_frame + 1, min(end_frame, total_frames))
     frames_to_process = end_frame - start_frame
+    temporal_enabled = video_params.temporal_avg_enabled and video_params.temporal_avg_window > 1
+    frame_cache = OrderedDict()
 
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
     writer = None
 
     try:
         for frame_offset in range(frames_to_process):
-            success, frame = cap.read()
-            if not success:
-                break
+            frame_index = start_frame + frame_offset
+            if temporal_enabled:
+                frame = _build_temporal_frame_for_export(
+                    cap,
+                    frame_index,
+                    start_frame,
+                    end_frame,
+                    video_params.temporal_avg_window,
+                    frame_cache,
+                )
+                if frame is None:
+                    break
+            else:
+                success, frame = cap.read()
+                if not success:
+                    break
 
             processed = _apply_preview_effects_for_export(frame, video_params)
 
@@ -164,13 +218,13 @@ def apply_edits_and_save(video_path, video_params, output_folder, progress_callb
     
     stream = ffmpeg.input(video_path)
     probe = ffmpeg.probe(video_path)
+    fps = eval(probe['streams'][0].get('r_frame_rate', '30/1'))
+    if fps <= 0:
+        fps = 30.0
 
     if video_params.trim_end is not None:
         start_frame = video_params.trim_start
         end_frame = video_params.trim_end
-        
-        probe = ffmpeg.probe(video_path)
-        fps = eval(probe['streams'][0]['r_frame_rate'])
 
         start_time = start_frame / fps
         end_time = end_frame / fps
@@ -197,6 +251,22 @@ def apply_edits_and_save(video_path, video_params, output_folder, progress_callb
                            brightness=adj_brightness,
                            contrast=adj_contrast,
                            saturation=adj_saturation)
+
+    temporal_enabled = video_params.temporal_avg_enabled and video_params.temporal_avg_window > 1
+    if temporal_enabled:
+        half_window = video_params.temporal_avg_window // 2
+        pad_duration = half_window / fps
+        weights = ' '.join(['1'] * video_params.temporal_avg_window)
+        stream = ffmpeg.filter(
+            stream,
+            'tpad',
+            start_mode='clone',
+            start_duration=pad_duration,
+            stop_mode='clone',
+            stop_duration=pad_duration,
+        )
+        stream = ffmpeg.filter(stream, 'tmix', frames=video_params.temporal_avg_window, weights=weights)
+        stream = stream.trim(start=pad_duration, end=pad_duration + duration).setpts('PTS-STARTPTS')
 
     stream = ffmpeg.output(stream, output_path,
                            vcodec='libx264', 

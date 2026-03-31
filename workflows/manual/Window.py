@@ -4,7 +4,8 @@ import os
 import sys
 import numpy as np
 import time
-from PyQt5.QtWidgets import QWidget, QLabel, QLineEdit, QPushButton, QHBoxLayout, QVBoxLayout, QSlider, QGroupBox, QMessageBox, QAction
+from collections import OrderedDict
+from PyQt5.QtWidgets import QWidget, QLabel, QLineEdit, QPushButton, QHBoxLayout, QVBoxLayout, QSlider, QGroupBox, QMessageBox, QAction, QComboBox
 from PyQt5.QtGui import QPixmap, QImage, QRegExpValidator
 from PyQt5.QtCore import Qt, QRegExp, QEvent, QTimer
 from qtrangeslider import QRangeSlider
@@ -28,6 +29,8 @@ class EditWindow(QWidget):
         self.csv_path = csv_path
         self.processed_frames_count = 0
         self.frame_data = self.load_csv_data()
+        self.temporal_frame_cache = OrderedDict()
+        self.temporal_cache_max_size = 20
 
         self.read_timeout_warning_threshold = 5.0
 
@@ -264,6 +267,33 @@ class EditWindow(QWidget):
         self.clahe_button.clicked.connect(self.update_display_frame)
         controls_layout.addWidget(self.clahe_button)
 
+        temporal_group = QGroupBox("Temporal averaging")
+        temporal_layout = QVBoxLayout()
+
+        self.temporal_button = QPushButton("Temporal Avg: Off")
+        self.temporal_button.setCheckable(True)
+        self.temporal_button.setChecked(self.video_params.temporal_avg_enabled)
+        self.temporal_button.setToolTip("Temporal frame averaging preview (pixel-level only)")
+        self.temporal_button.toggled.connect(self._on_temporal_toggle)
+        self._update_temporal_button_text(self.temporal_button.isChecked())
+        temporal_layout.addWidget(self.temporal_button)
+
+        temporal_window_row = QHBoxLayout()
+        temporal_window_label = QLabel("Window:")
+        self.temporal_window_combo = QComboBox()
+        self.temporal_window_combo.addItems(["1", "3", "5", "7", "9"])
+        current_window = str(self.video_params.temporal_avg_window)
+        if current_window not in ["1", "3", "5", "7", "9"]:
+            self.temporal_window_combo.addItem(current_window)
+        self.temporal_window_combo.setCurrentText(current_window)
+        self.temporal_window_combo.currentTextChanged.connect(self._on_temporal_window_changed)
+        temporal_window_row.addWidget(temporal_window_label)
+        temporal_window_row.addWidget(self.temporal_window_combo)
+        temporal_layout.addLayout(temporal_window_row)
+
+        temporal_group.setLayout(temporal_layout)
+        controls_layout.addWidget(temporal_group)
+
         frame_info_group = QGroupBox("Frame info")
         frame_info_layout = QVBoxLayout()
 
@@ -324,6 +354,87 @@ class EditWindow(QWidget):
             self.clahe_button.setText("CLAHE: On")
         else:
             self.clahe_button.setText("CLAHE: Off")
+
+    def _update_temporal_button_text(self, checked):
+        self.temporal_button.setText("Temporal Avg: On" if checked else "Temporal Avg: Off")
+
+    def _on_temporal_toggle(self, checked):
+        self.video_params.temporal_avg_enabled = checked
+        self._update_temporal_button_text(checked)
+        if checked:
+            self._prefetch_temporal_neighbors()
+        self.update_display_frame()
+
+    def _on_temporal_window_changed(self, value):
+        try:
+            window = int(value)
+        except ValueError:
+            return
+        self.video_params.temporal_avg_window = window
+        self.video_params.validate()
+        self._prefetch_temporal_neighbors()
+        self.update_display_frame()
+
+    def _reset_temporal_cache(self, keep_current=True):
+        self.temporal_frame_cache.clear()
+        if keep_current and self.current_raw_frame is not None:
+            self._cache_frame(self.current_frame_index, self.current_raw_frame)
+
+    def _cache_frame(self, frame_index, frame):
+        self.temporal_frame_cache[frame_index] = frame
+        self.temporal_frame_cache.move_to_end(frame_index)
+        while len(self.temporal_frame_cache) > self.temporal_cache_max_size:
+            self.temporal_frame_cache.popitem(last=False)
+
+    def _get_temporal_indices(self, center_index):
+        half_window = self.video_params.temporal_avg_window // 2
+        start_index = max(self.start_frame, center_index - half_window)
+        end_index = min(self.end_frame - 1, center_index + half_window)
+        return range(start_index, end_index + 1)
+
+    def _get_frame_from_cache(self, frame_index):
+        if frame_index in self.temporal_frame_cache:
+            self.temporal_frame_cache.move_to_end(frame_index)
+            return self.temporal_frame_cache[frame_index]
+
+        if frame_index == self.current_frame_index and self.current_raw_frame is not None:
+            self._cache_frame(frame_index, self.current_raw_frame)
+            return self.current_raw_frame
+
+        restore_pos = int(self.video.get(cv2.CAP_PROP_POS_FRAMES))
+        self.video.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+        success, frame = self.video.read()
+        self.video.set(cv2.CAP_PROP_POS_FRAMES, restore_pos)
+
+        if not success:
+            return None
+
+        self._cache_frame(frame_index, frame)
+        return frame
+
+    def _prefetch_temporal_neighbors(self):
+        if not self.video_params.temporal_avg_enabled or self.current_raw_frame is None:
+            return
+        for frame_index in self._get_temporal_indices(self.current_frame_index):
+            self._get_frame_from_cache(frame_index)
+
+    def _get_temporal_averaged_frame(self):
+        if not self.video_params.temporal_avg_enabled or self.current_raw_frame is None:
+            return self.current_raw_frame
+        if self.video_params.temporal_avg_window <= 1:
+            return self.current_raw_frame
+
+        frames_to_average = []
+        for frame_index in self._get_temporal_indices(self.current_frame_index):
+            frame = self._get_frame_from_cache(frame_index)
+            if frame is not None:
+                frames_to_average.append(frame.astype(np.float32))
+
+        if not frames_to_average:
+            return self.current_raw_frame
+
+        averaged = np.mean(frames_to_average, axis=0)
+        return np.clip(averaged, 0, 255).astype(np.uint8)
 
     def apply_clahe(self, frame):
         from core.roi_utils import apply_clahe
@@ -461,6 +572,8 @@ class EditWindow(QWidget):
         self.seek_to_frame(user_frame - 1)
 
     def seek_to_frame(self, frame_num):
+        if abs(frame_num - self.current_frame_index) > self.temporal_cache_max_size:
+            self._reset_temporal_cache(keep_current=False)
         self.current_frame_index = frame_num
         self.load_frame_from_video()
 
@@ -490,6 +603,7 @@ class EditWindow(QWidget):
             self.processed_frame_label.setText(f"{self.processed_frames_count}/{self.end_frame}")
             self.scrub_frame_label.setText(f"{self.current_frame_index + 1}/{self.end_frame}")
             self._update_scrub_to_bounds()
+            self._reset_temporal_cache(keep_current=True)
             
             if self.current_frame_index < self.start_frame or self.current_frame_index >= self.end_frame:
                 self.seek_to_frame(self.start_frame)
@@ -530,6 +644,8 @@ class EditWindow(QWidget):
                 self.current_raw_frame = frame
                 self.last_loaded_frame = self.current_frame_index
                 self.scrub_frame_label.setText(f"{self.current_frame_index + 1}/{self.end_frame}")
+                self._cache_frame(self.current_frame_index, self.current_raw_frame)
+                self._prefetch_temporal_neighbors()
 
             
         if self.current_raw_frame is not None:
@@ -550,7 +666,7 @@ class EditWindow(QWidget):
             self.video_label.setText("No frame loaded")
             return
         
-        frame = self.current_raw_frame
+        frame = self._get_temporal_averaged_frame()
         if self.clahe_button.isChecked():
             frame = self.apply_clahe(frame)
         

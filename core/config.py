@@ -24,7 +24,9 @@ class VideoParams:
     _DEFAULTS = {
         'brightness' : 0,
         'saturation' : 100,
-        'contrast' : 100
+        'contrast' : 100,
+        'temporal_avg_enabled': False,
+        'temporal_avg_window': 5,
     }
 
     def __init__(
@@ -34,6 +36,8 @@ class VideoParams:
         crop_coords: tuple[int, int, int, int] | None = None, # x, y, w, h
         warp_quad: list[tuple[int, int]] | None = None,
         warp_enabled: bool = False,
+        temporal_avg_enabled: bool | None = None,
+        temporal_avg_window: int | None = None,
         # validate() uses ranges:
         # brightness: -255 - 255
         # saturation: 0 - 300
@@ -47,6 +51,8 @@ class VideoParams:
         self.crop_coords = crop_coords
         self.warp_quad = warp_quad
         self.warp_enabled = warp_enabled
+        self.temporal_avg_enabled = self._DEFAULTS['temporal_avg_enabled'] if temporal_avg_enabled is None else temporal_avg_enabled
+        self.temporal_avg_window = self._DEFAULTS['temporal_avg_window'] if temporal_avg_window is None else temporal_avg_window
         self.brightness = self._DEFAULTS['brightness'] if brightness is None else brightness
         self.saturation = self._DEFAULTS['saturation'] if saturation is None else saturation
         self.contrast = self._DEFAULTS['contrast'] if contrast is None else contrast
@@ -57,6 +63,7 @@ class VideoParams:
             return NotImplemented
         return (self.trim_start == other.trim_start and self.trim_end == other.trim_end and self.crop_coords == other.crop_coords
             and self.warp_quad == other.warp_quad and self.warp_enabled == other.warp_enabled
+                and self.temporal_avg_enabled == other.temporal_avg_enabled and self.temporal_avg_window == other.temporal_avg_window
                 and self.brightness == other.brightness and self.saturation == other.saturation and self.contrast == other.contrast)            
 
     def validate(self):
@@ -79,6 +86,10 @@ class VideoParams:
                     raise ValueError("warp_quad coordinates must be integers")
         if not isinstance(self.warp_enabled, bool):
             raise ValueError("warp_enabled must be a boolean")
+        if not isinstance(self.temporal_avg_enabled, bool):
+            raise ValueError("temporal_avg_enabled must be a boolean")
+        if not isinstance(self.temporal_avg_window, int) or self.temporal_avg_window < 1 or self.temporal_avg_window % 2 == 0:
+            raise ValueError("temporal_avg_window must be an odd integer >= 1")
         if not (-255 <= self.brightness <= 255):
             raise ValueError("brightness must be between -255 and 255")
         if not (0 <= self.saturation <= 300):
