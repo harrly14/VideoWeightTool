@@ -272,6 +272,18 @@ class EditWindow(QWidget):
         processed_frames_layout.addWidget(self.processed_frame_label)
         frame_info_layout.addLayout(processed_frames_layout)
 
+        scrub_to_layout = QHBoxLayout()
+        scrub_to_label = QLabel("Scrub to:")
+        self.scrub_to_entry = QLineEdit()
+        self.scrub_to_entry.setFixedWidth(90)
+        self.scrub_to_entry.setPlaceholderText(f"1-{self.total_frames}")
+        self.scrub_to_entry.setToolTip("Jump to frame number (1-based), then press Enter")
+        self.scrub_to_entry.setValidator(QRegExpValidator(QRegExp(r"^[0-9]*$")))
+        self.scrub_to_entry.returnPressed.connect(self.scrub_to_frame)
+        scrub_to_layout.addWidget(scrub_to_label)
+        scrub_to_layout.addWidget(self.scrub_to_entry)
+        frame_info_layout.addLayout(scrub_to_layout)
+
         frame_info_group.setLayout(frame_info_layout)
         controls_layout.addWidget(frame_info_group)
 
@@ -353,6 +365,39 @@ class EditWindow(QWidget):
         self.video_label.update()
         self.update_display_frame()
 
+    def _update_scrub_to_bounds(self):
+        # user-facing frame stuff is 1-indexed instead of 0
+        min_user_frame = self.start_frame + 1
+        max_user_frame = self.end_frame
+        self.scrub_to_entry.setPlaceholderText(f"{min_user_frame}-{max_user_frame}")
+        self.scrub_to_entry.setToolTip(
+            f"Jump to frame number ({min_user_frame}-{max_user_frame}), then press Enter"
+        )
+
+    def scrub_to_frame(self):
+        value = self.scrub_to_entry.text().strip()
+        if not value:
+            return
+
+        try:
+            user_frame = int(value)
+        except ValueError:
+            QMessageBox.warning(self, "Invalid frame", "Please enter a valid frame number")
+            return
+
+        min_user_frame = self.start_frame + 1
+        max_user_frame = self.end_frame
+
+        if not (min_user_frame <= user_frame <= max_user_frame):
+            QMessageBox.warning(
+                self,
+                "Frame out of range",
+                f"Please enter a frame between {min_user_frame} and {max_user_frame}."
+            )
+            return
+
+        self.seek_to_frame(user_frame - 1)
+
     def seek_to_frame(self, frame_num):
         self.current_frame_index = frame_num
         self.load_frame_from_video()
@@ -382,6 +427,7 @@ class EditWindow(QWidget):
 
             self.processed_frame_label.setText(f"{self.processed_frames_count}/{self.end_frame}")
             self.scrub_frame_label.setText(f"{self.current_frame_index + 1}/{self.end_frame}")
+            self._update_scrub_to_bounds()
             
             if self.current_frame_index < self.start_frame or self.current_frame_index >= self.end_frame:
                 self.seek_to_frame(self.start_frame)
@@ -425,13 +471,15 @@ class EditWindow(QWidget):
 
             
         if self.current_raw_frame is not None:
-                value = self.frame_data.get(self.current_frame_index, "0")
-                self.weight_entry.setText("" if value == '0' else value)
+            value = self.frame_data.get(self.current_frame_index, "0")
+            self.weight_entry.setText("" if value == '0' else value)
+            self.scrub_to_entry.setText(str(self.current_frame_index + 1))
+            self._update_scrub_to_bounds()
 
-                self.prev_button.setEnabled(False if self.current_frame_index <= self.start_frame else True)
-                self.next_button.setEnabled(False if self.current_frame_index >= self.end_frame - 1 else True)
+            self.prev_button.setEnabled(False if self.current_frame_index <= self.start_frame else True)
+            self.next_button.setEnabled(False if self.current_frame_index >= self.end_frame - 1 else True)
 
-                self.update_display_frame()
+            self.update_display_frame()
         
         self.frame_slider.setValue(self.current_frame_index)
 
