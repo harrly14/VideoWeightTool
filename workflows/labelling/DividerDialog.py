@@ -35,7 +35,7 @@ class DividerCanvas(QWidget):
     def __init__(self, bgr_image: np.ndarray, default_dividers: Optional[List[int]] = None, parent=None):
         """
         Args:
-            bgr_image: The warped CLAHE image in BGR format, shape (CNN_HEIGHT, CNN_WIDTH, 3).
+            bgr_image: Warped ROI image in BGR format, shape (CNN_HEIGHT, CNN_WIDTH, 3).
             default_dividers: Optional list of NUM_DIVIDERS x-coordinates in canvas space (0..CNN_WIDTH).
         """
         super().__init__(parent)
@@ -227,7 +227,7 @@ class DividerCanvas(QWidget):
 
 class DividerDialog(QDialog):
     """
-    Dialog that presents a warped CLAHE ROI preview and lets the user
+    Dialog that presents a warped ROI preview and lets the user
     position three vertical dividers to partition digits.
     """
 
@@ -236,7 +236,7 @@ class DividerDialog(QDialog):
                  parent=None):
         """
         Args:
-            bgr_image: Warped CLAHE image, shape (CNN_HEIGHT, CNN_WIDTH, 3), BGR.
+            bgr_image: Warped ROI image, shape (CNN_HEIGHT, CNN_WIDTH, 3), BGR.
             default_dividers: Previous divider positions for carryover.
             parent: Parent widget.
         """

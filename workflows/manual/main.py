@@ -1,5 +1,6 @@
 import os
 os.environ["OPENCV_FFMPEG_READ_ATTEMPTS"] = str(2**18)
+import argparse
 import csv
 import cv2
 import sys
@@ -335,6 +336,16 @@ def launch_editing_window(video, output_csv):
     return window.video_params
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Manual video weight editing workflow")
+    parser.add_argument("--videofile", help="Path to the input video file")
+    parser.add_argument("--csvfile", help="Path to an existing CSV file or output CSV path")
+    parser.add_argument(
+        "--no-save-video",
+        action="store_true",
+        help="Skip the final save prompt and do not export an edited video",
+    )
+    args = parser.parse_args()
+
     #ensure a QApplication exists before making any QWidgets
     app = QApplication.instance() or QApplication(sys.argv)
 
@@ -346,21 +357,27 @@ if __name__ == "__main__":
         if ffmpeg_q == QMessageBox.No:
             sys.exit(1)
 
-    QMessageBox.information(None, "Select video file", "You will now select a video file. " \
-    "\nI recommend not using a file on a network drive, as latency issues could cause the application to crash")
-
     options = QFileDialog.Options()
-    video_filter = "Video Files (*.mp4 *.MP4 *.mov *.MOV *.avi *.AVI *.mkv *.MKV);;All Files (*)"
-    video_path, _ = QFileDialog.getOpenFileName(
-        None,
-        "Select video file",
-        os.getcwd(),
-        video_filter,
-        options=options
-    )
-    if not video_path:
-        QMessageBox.information(None, "No file selected", "No video selected. Exiting...")
-        sys.exit()
+    if args.videofile:
+        video_path = os.path.abspath(args.videofile)
+        if not os.path.isfile(video_path):
+            QMessageBox.critical(None, "Invalid video file", f"Video file does not exist:\n{video_path}")
+            sys.exit(1)
+    else:
+        QMessageBox.information(None, "Select video file", "You will now select a video file. " \
+        "\nI recommend not using a file on a network drive, as latency issues could cause the application to crash")
+
+        video_filter = "Video Files (*.mp4 *.MP4 *.mov *.MOV *.avi *.AVI *.mkv *.MKV);;All Files (*)"
+        video_path, _ = QFileDialog.getOpenFileName(
+            None,
+            "Select video file",
+            os.getcwd(),
+            video_filter,
+            options=options
+        )
+        if not video_path:
+            QMessageBox.information(None, "No file selected", "No video selected. Exiting...")
+            sys.exit()
 
     scale_video = cv2.VideoCapture(video_path)
 
@@ -374,11 +391,14 @@ if __name__ == "__main__":
     video_base = os.path.splitext(os.path.basename(video_path))[0]
     timestamp = datetime.now().astimezone().strftime("%Y-%m-%d_%H-%M-%S")
 
-    use_existing_csv = QMessageBox.question(None, 'CSV setup', 
-            'Would you like to use a pre-existing csv with frame weights?' \
-            '\n Yes - Select the existing CSV file' \
-            '\n No - Select a folder for the output files and create the CSV', 
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+    if args.csvfile:
+        use_existing_csv = QMessageBox.Yes
+    else:
+        use_existing_csv = QMessageBox.question(None, 'CSV setup', 
+                'Would you like to use a pre-existing csv with frame weights?' \
+                '\n Yes - Select the existing CSV file' \
+                '\n No - Select a folder for the output files and create the CSV', 
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
     
     output_dir_made = False
     output_folder = None
@@ -404,19 +424,30 @@ if __name__ == "__main__":
                 for frame in range(total_frames):
                     writer.writerow([frame, 0])
     else:
-        csv_filter = "CSV Files (*.csv)"
-        csv_path, _ = QFileDialog.getOpenFileName(
-            None,
-            "Select existing CSV file",
-            os.getcwd(),
-            csv_filter,
-            options=options
-        )
-        if not csv_path:
-            QMessageBox.information(None, "No file selected", "No csv selected. Creating an empty csv in the current directory...")
-            output_csv = os.path.join(os.getcwd(), f"{video_base}_weights.csv")
+        if args.csvfile:
+            output_csv = os.path.abspath(args.csvfile)
+            if not os.path.isfile(output_csv):
+                os.makedirs(os.path.dirname(output_csv) or os.getcwd(), exist_ok=True)
+                with open(output_csv, 'w', newline='') as csvfile:
+                    writer = csv.writer(csvfile)
+                    writer.writerow(["frame_num", "weight"])
+                    total_frames = int(scale_video.get(cv2.CAP_PROP_FRAME_COUNT))
+                    for frame in range(total_frames):
+                        writer.writerow([frame, 0])
         else:
-            output_csv = csv_path
+            csv_filter = "CSV Files (*.csv)"
+            csv_path, _ = QFileDialog.getOpenFileName(
+                None,
+                "Select existing CSV file",
+                os.getcwd(),
+                csv_filter,
+                options=options
+            )
+            if not csv_path:
+                QMessageBox.information(None, "No file selected", "No csv selected. Creating an empty csv in the current directory...")
+                output_csv = os.path.join(os.getcwd(), f"{video_base}_weights.csv")
+            else:
+                output_csv = csv_path
 
     
     updated_params = launch_editing_window(scale_video, output_csv)
@@ -445,6 +476,20 @@ if __name__ == "__main__":
             if os.path.exists(backup_csv):
                 os.rename(backup_csv, output_csv)
             QMessageBox.warning(None, "Error", f"An error occurred: {e}")
+
+    if args.no_save_video:
+        try:
+            if scale_video is not None:
+                scale_video.release()
+        except Exception:
+            pass
+
+        try:
+            cv2.destroyAllWindows()
+        except Exception:
+            pass
+
+        sys.exit(0)
 
     has_edits = updated_params != VideoParams()
     can_save_without_ffmpeg = bool(getattr(updated_params, 'warp_enabled', False) and getattr(updated_params, 'warp_quad', None))

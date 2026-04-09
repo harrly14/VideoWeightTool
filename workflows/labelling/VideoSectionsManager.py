@@ -14,7 +14,7 @@ from PyQt5.QtCore import Qt
 
 from workflows.labelling.ROISelectionDialog import ROISelectionDialog
 from workflows.labelling.DividerDialog import DividerDialog
-from core.roi_utils import warp_roi_to_canvas, apply_clahe
+from core.roi_utils import warp_roi_to_canvas
 from core.config import CNN_WIDTH, CNN_HEIGHT
 
 
@@ -295,17 +295,14 @@ class VideoSectionsManager(QDialog):
         if dialog.exec_() == QDialog.Accepted:
             section = dialog.get_section()
             if section:
-                # create warped CLAHE image for divider placement
+                # Use the same warped ROI representation as extraction/data images.
                 raw_frame = dialog.current_raw_frame
                 roi_quad = section['quad']
                 if raw_frame is not None and roi_quad:
                     warped = warp_roi_to_canvas(raw_frame, roi_quad, CNN_WIDTH, CNN_HEIGHT)
-                    clahe_result = apply_clahe(warped)
-                    # apply_clahe returns single-channel (H, W, 1), convert back to 3-channel BGR for DividerDialog
-                    clahe_warped = cv2.cvtColor(clahe_result[:, :, 0], cv2.COLOR_GRAY2BGR)
                     
                     divider_dialog = DividerDialog(
-                        clahe_warped,
+                        warped,
                         default_dividers=self.last_dividers,
                         parent=self
                     )

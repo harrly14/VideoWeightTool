@@ -25,6 +25,7 @@ class VideoParams:
         'brightness' : 0,
         'saturation' : 100,
         'contrast' : 100,
+        'gamma': 100,
         'temporal_avg_enabled': False,
         'temporal_avg_window': 5,
     }
@@ -42,9 +43,11 @@ class VideoParams:
         # brightness: -255 - 255
         # saturation: 0 - 300
         # contrast: 0 - 200
+        # gamma: 50 - 200 (100 = no change)
         brightness: int | None = None, 
         saturation: int | None = None,
-        contrast: int | None = None
+        contrast: int | None = None,
+        gamma: int | None = None
     ):
         self.trim_start = trim_start
         self.trim_end = trim_end
@@ -56,6 +59,7 @@ class VideoParams:
         self.brightness = self._DEFAULTS['brightness'] if brightness is None else brightness
         self.saturation = self._DEFAULTS['saturation'] if saturation is None else saturation
         self.contrast = self._DEFAULTS['contrast'] if contrast is None else contrast
+        self.gamma = self._DEFAULTS['gamma'] if gamma is None else gamma
         self.validate()
 
     def __eq__(self, other):
@@ -64,7 +68,8 @@ class VideoParams:
         return (self.trim_start == other.trim_start and self.trim_end == other.trim_end and self.crop_coords == other.crop_coords
             and self.warp_quad == other.warp_quad and self.warp_enabled == other.warp_enabled
                 and self.temporal_avg_enabled == other.temporal_avg_enabled and self.temporal_avg_window == other.temporal_avg_window
-                and self.brightness == other.brightness and self.saturation == other.saturation and self.contrast == other.contrast)            
+                and self.brightness == other.brightness and self.saturation == other.saturation
+                and self.contrast == other.contrast and self.gamma == other.gamma)
 
     def validate(self):
         if self.trim_start < 0:
@@ -96,6 +101,8 @@ class VideoParams:
             raise ValueError("saturation must be between 0 and 300")
         if not (0 <= self.contrast <= 200):
             raise ValueError("contrast must be between 0 and 200")
+        if not (50 <= self.gamma <= 200):
+            raise ValueError("gamma must be between 50 and 200")
 
     @classmethod
     def get_default_value(cls, param_name: str):

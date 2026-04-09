@@ -31,6 +31,7 @@ class EditWindow(QWidget):
         self.frame_data = self.load_csv_data()
         self.temporal_frame_cache = OrderedDict()
         self.temporal_cache_max_size = 20
+        self._gamma_lut_cache = {}
 
         self.read_timeout_warning_threshold = 5.0
 
@@ -259,6 +260,20 @@ class EditWindow(QWidget):
         contrast_group.setLayout(contrast_layout)
         controls_layout.addWidget(contrast_group)
 
+        gamma_group = QGroupBox("Gamma")
+        gamma_layout = QVBoxLayout()
+        self.gamma_slider = QSlider(Qt.Orientation.Horizontal)
+        self.gamma_slider.setRange(50, 200) # 50 to 200, where 100 = no change
+        self.gamma_slider.setValue(self.video_params.gamma)
+        self.gamma_slider.setToolTip("Adjust gamma (50 to 200, 100 is normal)")
+        self.gamma_slider.valueChanged.connect(partial(self._on_param_change, "gamma"))
+        gamma_layout.addWidget(self.gamma_slider)
+        self.reset_gamma_button = QPushButton("Reset gamma")
+        self.reset_gamma_button.clicked.connect(partial(self.reset_slider, "gamma"))
+        gamma_layout.addWidget(self.reset_gamma_button)
+        gamma_group.setLayout(gamma_layout)
+        controls_layout.addWidget(gamma_group)
+
         self.clahe_button = QPushButton("CLAHE: Off")
         self.clahe_button.setToolTip("Toggle CLAHE (Contrast Limited Adaptive Histogram Equalization) preview")
         self.clahe_button.setCheckable(True)
@@ -443,6 +458,25 @@ class EditWindow(QWidget):
         grayscale_2d = single_channel[:, :, 0]  # Extract (H, W) from (H, W, 1)
         return cv2.cvtColor(grayscale_2d, cv2.COLOR_GRAY2BGR)
 
+    def apply_gamma(self, frame):
+        if frame is None or self.video_params.gamma == 100:
+            return frame
+
+        gamma_value = max(50, min(200, int(self.video_params.gamma)))
+        table = self._gamma_lut_cache.get(gamma_value)
+        if table is None:
+            gamma = gamma_value / 100.0
+            inv_gamma = 1.0 / gamma
+            table = np.array([((i / 255.0) ** inv_gamma) * 255 for i in range(256)], dtype=np.uint8)
+            self._gamma_lut_cache[gamma_value] = table
+
+        # Apply gamma on luminance only to preserve color balance in preview.
+        if frame.dtype != np.uint8:
+            frame = np.clip(frame, 0, 255).astype(np.uint8)
+        ycrcb = cv2.cvtColor(frame, cv2.COLOR_BGR2YCrCb)
+        ycrcb[:, :, 0] = cv2.LUT(ycrcb[:, :, 0], table)
+        return cv2.cvtColor(ycrcb, cv2.COLOR_YCrCb2BGR)
+
     def reset_slider(self, param_name):
         default_val = self.video_params.get_default_value(param_name)
         if default_val is None:
@@ -456,6 +490,9 @@ class EditWindow(QWidget):
         elif param_name == "contrast": 
             self.contrast_slider.setValue(default_val)
             self.video_params.contrast = default_val
+        elif param_name == "gamma":
+            self.gamma_slider.setValue(default_val)
+            self.video_params.gamma = default_val
 
         self.update_display_frame()
 
@@ -667,8 +704,12 @@ class EditWindow(QWidget):
             return
         
         frame = self._get_temporal_averaged_frame()
+        frame = self.apply_gamma(frame)
         if self.clahe_button.isChecked():
             frame = self.apply_clahe(frame)
+        if frame is None:
+            self.video_label.setText("No frame loaded")
+            return
         
         preview_frame = self.apply_preview_effects(frame)
 
