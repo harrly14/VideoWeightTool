@@ -51,12 +51,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 from core.model import create_model
 from core.dataset import get_transforms
-from core.config import CNN_WIDTH, CNN_HEIGHT, NUM_DIVIDERS
+from core.config import (
+        CNN_WIDTH, CNN_HEIGHT, NUM_DIVIDERS,
+        FILTER_CONF_THRESH, FILTER_ENT_THRESH, FILTER_JUMP_THRESH,
+        STRICT_CONF_THRESH, STRICT_ENT_THRESH, STRICT_JUMP_THRESH
+    )
 from core.roi_utils import get_roi_for_frame, warp_roi_to_canvas, slice_roi_into_digits
 
 
 def load_model(model_path, device):
-    """Load trained model from checkpoint."""
     try:
         checkpoint = torch.load(model_path, map_location=device)
         if 'model_state_dict' in checkpoint:
@@ -77,7 +80,6 @@ def load_model(model_path, device):
     except Exception as e:
         raise Exception(f"Failed to load model from {model_path}: {e}")
 
-# CONFIGURATION
 
 def cleanup_checkpoint(checkpoint_path):
     """Remove checkpoint file after successful completion"""
@@ -85,7 +87,6 @@ def cleanup_checkpoint(checkpoint_path):
         os.remove(checkpoint_path)
         print("  Checkpoint file cleaned up")
 
-# VIDEO PROCESSING
 def get_video_metadata(video_path):
     """Get video metadata without loading frames"""
     if not os.path.exists(video_path):
@@ -108,8 +109,6 @@ def get_video_metadata(video_path):
 def get_roi(frame, roi_coords=None):
     return warp_roi_to_canvas(frame, roi_coords, CNN_WIDTH, CNN_HEIGHT)
 
-
-
 def preprocess_frame(frame, transform):
     # Just convert to RGB, as Albumentations expects RGB
     image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -119,8 +118,6 @@ def preprocess_frame(frame, transform):
     image_tensor = augmented['image']
     
     return image_tensor
-
-# INFERENCE
 
 def predict_digits_batch(model, digit_tensors, device):
     """Predict per-digit class/confidence/entropy from variable-width tensors."""
@@ -162,7 +159,6 @@ def predict_digits_batch(model, digit_tensors, device):
     ]
 
 def assemble_frame_prediction(digit_results):
-    """Assemble a frame-level prediction from 4 digit-level tuples."""
     if len(digit_results) != 4:
         raise ValueError(f"Expected 4 digit results, got {len(digit_results)}")
 
@@ -312,7 +308,7 @@ def process_video_streaming_batched(video_path, model, transform, roi_sections, 
             # Get the correct ROI for this frame
             roi_info = get_roi_for_frame(frame_num, roi_sections)
             if roi_info is None:
-                # No ROI for this frame — emit placeholder, skip inference
+                # No ROI for this frame - emit placeholder, skip inference
                 timestamp = frame_num / fps if fps > 0 else frame_num
                 results_by_frame[frame_num] = {
                     'frame_num': frame_num,
@@ -375,12 +371,8 @@ def process_video_streaming_batched(video_path, model, transform, roi_sections, 
     
     return results, checkpoint_path
 
-# ============================================================
 # POST-PROCESSING
-# ============================================================
-from core.config import FILTER_CONF_THRESH, FILTER_ENT_THRESH, FILTER_JUMP_THRESH
 
-# Flag reason codes for review UI
 FLAG_REASONS = {
     'low_conf': 'Low confidence',
     'high_ent': 'High entropy',
@@ -397,7 +389,7 @@ def robust_filter_pipeline(results, conf_thresh=FILTER_CONF_THRESH, ent_thresh=F
     last_valid = None
     
     for r in results:
-        # Frames with no ROI coverage are pre-flagged — pass through immediately
+        # Frames with no ROI coverage are pre-flagged - pass through immediately
         if r.get('no_roi', False):
             filtered_weights.append(None)
             flag_reasons.append('no_roi')
@@ -484,9 +476,7 @@ def load_ground_truth(gt_path):
         'weight_col': weight_col
     }
 
-# ============================================================
 # OUTPUT
-# ============================================================
 def save_results_csv(results, output_path, metadata, model=None):
     """
     Save predictions to CSV with format enforcement applied.
@@ -662,16 +652,12 @@ def create_annotated_video(video_path, results, output_path, roi_coords=None, fr
     out.release()
     print(f"Annotated video saved to: {output_path}")
 
-# ============================================================
 # CHECKPOINTING
-# ============================================================
 def get_checkpoint_path(video_path):
-    """Generate checkpoint file path for a video"""
     base_name = os.path.splitext(os.path.basename(video_path))[0]
     return f"{base_name}_checkpoint.json"
 
 def save_checkpoint(checkpoint_path, results, last_frame):
-    """Save processing progress to checkpoint file"""
     data = {
         'results': results,
         'last_frame': last_frame,
@@ -685,7 +671,6 @@ def save_checkpoint(checkpoint_path, results, last_frame):
         print(f"  Warning: Failed to save checkpoint: {e}")
 
 def load_checkpoint(checkpoint_path):
-    """Load processing progress from checkpoint file"""
     try:
         with open(checkpoint_path, 'r') as f:
             data = json.load(f)
@@ -733,9 +718,7 @@ Examples:
     
     return parser.parse_args()
 
-def main():
-    """Main execution pipeline"""
-    
+def main():    
     args = parse_args()
     
     # Require video argument
@@ -849,12 +832,6 @@ def main():
         return 1
     
     print(f"Flagging problematic predictions...")
-
-    # Determine thresholds (strict mode uses tighter thresholds)
-    from core.config import (
-        FILTER_CONF_THRESH, FILTER_ENT_THRESH, FILTER_JUMP_THRESH,
-        STRICT_CONF_THRESH, STRICT_ENT_THRESH, STRICT_JUMP_THRESH
-    )
     
     if args.strict:
         conf_thresh = max(args.confidence_threshold, STRICT_CONF_THRESH)
