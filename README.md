@@ -163,8 +163,10 @@ python pipelines/inference.py --video path/to/video.mp4 --output weights.csv
 
 Options:
 ```bash
-# Manually specify ROI (8 comma-separated quad points: x1,y1,x2,y2,x3,y3,x4,y4)
-python pipelines/inference.py --video video.mp4 --roi 100,50,400,50,400,150,100,150
+# Manually specify ROI + digit dividers
+# ROI: 8 comma-separated quad points: x1,y1,x2,y2,x3,y3,x4,y4
+# Dividers: 4 comma-separated x-coordinates in warped canvas space
+python pipelines/inference.py --video video.mp4 --roi 100,50,400,50,400,150,100,150 --dividers 38,77,115,154
 
 # Use conservative mode (flag uncertain predictions more aggressively)
 python pipelines/inference.py --video video.mp4 --conservative
@@ -177,6 +179,8 @@ python pipelines/inference.py --video video.mp4 --save-video
 ```
 
 If `--roi` is omitted, inference attempts to load ROI sections from `data/metadata.json` for the input video.
+
+If `--roi` is provided, also provide `--dividers` so the ROI can be split into the four digit regions used by the model.
 
 ### 5. Evaluate a Checkpoint
 
