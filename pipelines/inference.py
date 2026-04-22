@@ -10,12 +10,11 @@ Flags:
         --output PATH          Path to output CSV file (default: <video>_weights.csv)
         --model PATH           Path to trained model (default: data/models/best_accuracy_model.pth)
         --roi X1,Y1,...,X4,Y4  ROI as 8 comma-separated quad points (auto-loaded from data/metadata.json if not provided)
-        --dividers D1,D2,D3    Three digit-divider x-coordinates in canvas space (used with --roi)
+        --dividers D1,D2,D3,D4 Four digit-divider x-coordinates in canvas space (used with --roi)
         --save-video           Create annotated output video with weight overlay
 
     Processing:
         --batch-size N         Batch size for inference (default: 8)
-        --smoothing-window N   Temporal median filter window size (default: 3, or 1 in strict mode)
         --checkpoint-every N   Save checkpoint every N frames, 0 to disable (default: 0)
         --resume               Resume processing from last checkpoint
 
@@ -707,12 +706,11 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    python process_video.py --video path/to/video.mp4 --output results.csv
-    python process_video.py --video video.mp4 --roi 883,407,1260,364,1325,505,868,548 --confidence-threshold 0.7
-    python process_video.py --video video.mp4 --batch-size 16 --checkpoint-every 1000 --save-video
-    python process_video.py --video video.mp4 --ground-truth gt.csv --gt-tolerance 0.0
-    python process_video.py --video video.mp4 --resume  # Resume from checkpoint
-    python process_video.py --video video.mp4 --no-strict  # Disable aggressive flagging
+    python pipelines/inference.py --video path/to/video.mp4 --output results.csv
+    python pipelines/inference.py --video video.mp4 --roi 883,407,1260,364,1325,505,868,548 --dividers 38,77,115,154 --confidence-threshold 0.7
+    python pipelines/inference.py --video video.mp4 --batch-size 16 --checkpoint-every 1000 --save-video
+    python pipelines/inference.py --video video.mp4 --ground-truth gt.csv --gt-tolerance 0.0
+    python pipelines/inference.py --video video.mp4 --resume  # Resume from checkpoint
         """
     )
     
@@ -720,7 +718,7 @@ Examples:
     parser.add_argument('--output', type=str, help='Path to output CSV file (default: video_name_weights.csv)')
     parser.add_argument('--model', type=str, default='data/models/best_accuracy_model.pth', help='Path to trained model')
     parser.add_argument('--roi', type=str, help='ROI as quad points: x1,y1,x2,y2,x3,y3,x4,y4 (auto-loaded from data/metadata.json if not provided)')
-    parser.add_argument('--dividers', type=str, help='Three digit-divider x-coordinates in canvas space: d1,d2,d3 (used with --roi)')
+    parser.add_argument('--dividers', type=str, help='Four digit-divider x-coordinates in canvas space: d1,d2,d3,d4 (used with --roi)')
     parser.add_argument('--batch-size', type=int, default=8, help='Batch size for inference')
     parser.add_argument('--checkpoint-every', type=int, default=0, help='Save checkpoint every N frames (0 to disable)')
     parser.add_argument('--resume', action='store_true', help='Resume from last checkpoint')

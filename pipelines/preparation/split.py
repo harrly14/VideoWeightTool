@@ -395,7 +395,8 @@ def split_data(df, train=0.75, val=0.125, test=0.125, waste_threshold=0.10, seed
         smallest-first ensures the trimmed tail is as small as possible.
 
     If the percentage of unused frames is larger than the waste threshold,
-    recommend_labeling() is triggered to help get closer to target splits.
+    I was going to have recommend_labeling() be triggered to help get closer to
+    target splits, but I never got around to implementing it.
     """
     print("Attempting to split data...")
     print(f"Target splits: {train*100:.1f}% train, {val*100:.1f}% validation, {test*100:.1f}% test")
@@ -495,44 +496,9 @@ def split_data(df, train=0.75, val=0.125, test=0.125, waste_threshold=0.10, seed
     if wasted_percent > waste_threshold:
         print(f"WARNING: {wasted_percent*100:.1f}% of frames unassigned (threshold: {waste_threshold*100:.1f}%)")
         print("Triggering recommended labelling...")
-        recommend_labeling(df, wasted_frames, waste_threshold)
+        # recommend_labeling(df, wasted_frames, waste_threshold)
 
     return result['train'], result['val'], result['test']
-
-def recommend_labeling(df, unlabeled_videos, waste_threshold):
-    # (Called when waste exceeds threshold)
-    # The goal is to recommend which currently-unlabeled videos the user should label to simultaneously optimize across three axes:
-    # 1. Reduce waste / improve split ratio fit 
-        # identify unlabeled videos whose frame counts would slot neatly into whichever split is currently undershooting its target. 
-        # A video that brings val from 11.2% → 12.4% is a better pick than one that overshoots to 14%.
-    # 2. Improve per-digit-position class balance 
-        # for each digit position (ones, tenths, hundredths, thousandths), compute the current distribution across train/val/test. 
-        # Score each unlabeled video by how much its label distribution would reduce imbalance if added. 
-        # Since unlabeled videos don't have labels yet, you'd need to either ask the user to quick-label a sample, 
-        # or skip this axis for truly unlabeled data and focus on the frame-count axes.
-    # 3. Maximize data utilization 
-        # prioritize recommendations where adding a video meaningfully increases total labeled frames in use vs. just nudging ratios.
-    # Combine these into a single recommendation score per video (weighted sum, with configurable weights). 
-    # Present the top N recommendations with a plain-language explanation: 
-    # "Labeling video_042.mp4 (320 frames) would bring your val split to 12.6% and fill a gap in the tenths=3 class."
-    # Considerations: 
-    # Video diversity: 
-        # a long video with 500 frames of label 1.234 is less valuable than a shorter video with varied labels. 
-        # Factor in label entropy of candidate videos if any partial labels exist.
-    # Diminishing returns:
-        # if the user follows recommendation #1, recommendations #2-N should update dynamically rather than being computed all at once upfront.
-    # User confirmation gate:
-        # before proceeding to split after recommendations are shown, always confirm the user is happy with the final video-to-split assignments.
-
-    # gemini says: 
-    # The "Anchor" Frame Approach: 
-    # Since you can't know the labels of unlabeled videos, use the research log approach we talked about earlier. 
-    # If the user says "Video_X starts at 6.8kg and ends at 7.2kg," the script can assume a linear distribution to estimate which digits it will provide.
-    
-    # Axis of Optimization: 
-    # Focus on Position Balance first. 
-    # If your heatmap shows zero 9s, and an unlabeled video is from a time of high swarm activity, that video gets a massive "Priority Bonus."
-    _ = (df, unlabeled_videos, waste_threshold)
 
 
 def balance_classes(dfs, split_names=('train', 'val', 'test')):
