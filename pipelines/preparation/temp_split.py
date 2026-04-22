@@ -113,7 +113,6 @@ def _handle_duplicate(df, flagged_df, row):
     ]
     return df, flagged_df
 
-
 def _handle_fluctuation(df, flagged_df, row):
     fname, fnum = row['filename'], row['frame_number']
     match = df[(df['filename'] == fname) & (df['frame_number'] == fnum)]
@@ -183,7 +182,6 @@ def _handle_fluctuation(df, flagged_df, row):
     ]
     return df, flagged_df
 
-
 def _handle_invalid_format(df, flagged_df, row):
     fname, fnum = row['filename'], row['frame_number']
     match = df[(df['filename'] == fname) & (df['frame_number'] == fnum)]
@@ -224,7 +222,6 @@ def _handle_invalid_format(df, flagged_df, row):
         ~((flagged_df['filename'] == fname) & (flagged_df['frame_number'] == fnum))
     ]
     return df, flagged_df
-
 
 def handle_flagged(df,flagged_df, output_path):
     print(f"Flagged {len(flagged_df)} rows. How would you like to proceed?")
@@ -271,7 +268,6 @@ def handle_flagged(df,flagged_df, output_path):
 
     return df, flagged_df
 
-
 def _weight_to_digits(weight):
     try:
         value = float(weight)
@@ -283,7 +279,6 @@ def _weight_to_digits(weight):
         return None
     return as_digits
 
-
 def _digit_hist_from_df(df):
     hist = np.zeros(10, dtype=np.int64)
     for weight in df['weight'].tolist():
@@ -294,18 +289,6 @@ def _digit_hist_from_df(df):
             hist[int(d)] += 1
     return hist
 
-
-def _build_video_stats(df):
-    stats = []
-    for filename, group in df.groupby('filename'):
-        stats.append({
-            'filename': filename,
-            'frame_count': int(len(group)),
-            'digit_hist': _digit_hist_from_df(group),
-        })
-    return pd.DataFrame(stats)
-
-
 def _build_row_strat_labels(df):
     numeric_weight = pd.to_numeric(df['weight'], errors='coerce')
     seq_labels = numeric_weight.map(lambda x: f"{x:.3f}" if pd.notna(x) else 'nan')
@@ -314,7 +297,6 @@ def _build_row_strat_labels(df):
     rare = set(counts[counts < 2].index.tolist())
     labels = seq_labels.where(~seq_labels.isin(rare), other='other').fillna('other')
     return labels
-
 
 def _split_rows_stratified(df, train, val, test, seed):
     if df.empty:
@@ -410,42 +392,6 @@ def split_data(df, train=0.75, val=0.125, test=0.125, waste_threshold=0.10, seed
 
     return train_df, val_df, test_df
 
-def recommend_labeling(df, unlabeled_videos, waste_threshold):
-    # (Called when waste exceeds threshold)
-    # The goal is to recommend which currently-unlabeled videos the user should label to simultaneously optimize across three axes:
-    # 1. Reduce waste / improve split ratio fit 
-        # identify unlabeled videos whose frame counts would slot neatly into whichever split is currently undershooting its target. 
-        # A video that brings val from 11.2% → 12.4% is a better pick than one that overshoots to 14%.
-    # 2. Improve per-digit-position class balance 
-        # for each digit position (ones, tenths, hundredths, thousandths), compute the current distribution across train/val/test. 
-        # Score each unlabeled video by how much its label distribution would reduce imbalance if added. 
-        # Since unlabeled videos don't have labels yet, you'd need to either ask the user to quick-label a sample, 
-        # or skip this axis for truly unlabeled data and focus on the frame-count axes.
-    # 3. Maximize data utilization 
-        # prioritize recommendations where adding a video meaningfully increases total labeled frames in use vs. just nudging ratios.
-    # Combine these into a single recommendation score per video (weighted sum, with configurable weights). 
-    # Present the top N recommendations with a plain-language explanation: 
-    # "Labeling video_042.mp4 (320 frames) would bring your val split to 12.6% and fill a gap in the tenths=3 class."
-    # Considerations: 
-    # Video diversity: 
-        # a long video with 500 frames of label 1.234 is less valuable than a shorter video with varied labels. 
-        # Factor in label entropy of candidate videos if any partial labels exist.
-    # Diminishing returns:
-        # if the user follows recommendation #1, recommendations #2-N should update dynamically rather than being computed all at once upfront.
-    # User confirmation gate:
-        # before proceeding to split after recommendations are shown, always confirm the user is happy with the final video-to-split assignments.
-
-    # gemini says: 
-    # The "Anchor" Frame Approach: 
-    # Since you can't know the labels of unlabeled videos, use the research log approach we talked about earlier. 
-    # If the user says "Video_X starts at 6.8kg and ends at 7.2kg," the script can assume a linear distribution to estimate which digits it will provide.
-    
-    # Axis of Optimization: 
-    # Focus on Position Balance first. 
-    # If your heatmap shows zero 9s, and an unlabeled video is from a time of high swarm activity, that video gets a massive "Priority Bonus."
-    _ = (df, unlabeled_videos, waste_threshold)
-
-
 def balance_classes(dfs, split_names=('train', 'val', 'test')):
     print("\nDigit-class balance report:")
     print("-" * 60)
@@ -469,7 +415,6 @@ def balance_classes(dfs, split_names=('train', 'val', 'test')):
     print("-" * 60)
     return reports
 
-
 def _parse_args():
     parser = argparse.ArgumentParser(description="Validate and split labelled frame data.")
     parser.add_argument('--csv-path', default='data/all_data.csv', help='Input CSV with filename,frame_number,weight columns')
@@ -485,7 +430,6 @@ def _parse_args():
     parser.add_argument('--waste-threshold', type=float, default=0.10, help='Unused-frame warning threshold')
     parser.add_argument('--skip-interactive-flags', action='store_true', help='Do not prompt for flagged rows; continue split')
     return parser.parse_args()
-
 
 if __name__ == "__main__":
     args = _parse_args()
