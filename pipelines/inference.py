@@ -34,13 +34,14 @@ Flags:
         --gt-tolerance F       Tolerance in kg for GT mismatch (default: 0.05)
         --gt-match-by MODE     Match GT by 'frame' or 'time' (default: time)
 """
-import argparse, cv2, torch, pandas as pd, numpy as np
 import os
+os.environ["OPENCV_FFMPEG_READ_ATTEMPTS"] = str(2**18)
+import argparse, cv2, torch, pandas as pd, numpy as np
 import sys
 import time
 import re
+import shutil
 import torch.nn.functional as F
-os.environ["OPENCV_FFMPEG_READ_ATTEMPTS"] = str(2**18)
 
 import json
 from pathlib import Path
@@ -489,11 +490,13 @@ def save_results_csv(results, output_path, metadata, model=None):
     """
     # Apply enforce_weight_format to smoothed_weight before export
     # This ensures CSV has clean X.XXX format for spreadsheet processing
+    model_formatter = getattr(model, 'enforce_weight_format', None) if model is not None else None
+
     for r in results:
         sw = r.get('smoothed_weight')
         if sw is not None:
-            if model is not None:
-                r['smoothed_weight'] = model.enforce_weight_format(str(sw))
+            if callable(model_formatter):
+                r['smoothed_weight'] = model_formatter(str(sw))
             else:
                 # Fallback: simple formatting if model not provided
                 try:
@@ -681,6 +684,22 @@ def load_checkpoint(checkpoint_path):
         print(f"  Warning: Could not load checkpoint: {e}")
         return [], 0
 
+
+def find_ffmpeg_binary():
+    ffmpeg_path = shutil.which('ffmpeg')
+    if ffmpeg_path:
+        return ffmpeg_path, 'PATH'
+
+    try:
+        import imageio_ffmpeg  # type: ignore
+        ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+        if ffmpeg_path and os.path.exists(ffmpeg_path):
+            return ffmpeg_path, 'imageio-ffmpeg'
+    except Exception:
+        pass
+
+    return None, None
+
 # MAIN WORKFLOW
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -726,9 +745,17 @@ def main():
         print("Error: --video argument is required.")
         return 1
 
+    ffmpeg_path, ffmpeg_source = find_ffmpeg_binary()
+    if ffmpeg_path is None:
+        print("\nError: No ffmpeg binary was found.")
+        print("This tool requires a real ffmpeg executable for reliable video handling.")
+        print("Install ffmpeg so 'ffmpeg' is available in PATH, or install imageio-ffmpeg in this venv.")
+        return 1
+
     print("\n" + "="*60)
     print("SCALE OCR VIDEO PROCESSOR")
     print("="*60)
+    print(f"FFmpeg binary: {ffmpeg_path} ({ffmpeg_source})")
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"\nDevice: {device}")
