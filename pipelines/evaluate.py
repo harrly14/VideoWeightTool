@@ -1,4 +1,5 @@
-"""Evaluate DigitCNN with per-digit and per-frame metrics.
+"""
+Evaluate DigitCNN with per-digit and per-frame metrics.
 
 This evaluation matches the current architecture:
 - Digit-level model predictions (single digit classes)
