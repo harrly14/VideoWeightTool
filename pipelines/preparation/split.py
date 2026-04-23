@@ -1,3 +1,13 @@
+"""
+Split a labelled frame DataFrame into train, validation, and test sets
+using row-level stratified splitting.
+
+The split stratifies on weight sequence labels where rare labels are
+bucketed into an 'other' class for stability.
+
+Note: this split script is the default because it got ~95% accuracy whereas
+video_level_split.py got ~40%. Results may differ with different datasets.
+"""
 import argparse
 import re
 import sys
@@ -113,7 +123,6 @@ def _handle_duplicate(df, flagged_df, row):
     ]
     return df, flagged_df
 
-
 def _handle_fluctuation(df, flagged_df, row):
     fname, fnum = row['filename'], row['frame_number']
     match = df[(df['filename'] == fname) & (df['frame_number'] == fnum)]
@@ -183,7 +192,6 @@ def _handle_fluctuation(df, flagged_df, row):
     ]
     return df, flagged_df
 
-
 def _handle_invalid_format(df, flagged_df, row):
     fname, fnum = row['filename'], row['frame_number']
     match = df[(df['filename'] == fname) & (df['frame_number'] == fnum)]
@@ -224,7 +232,6 @@ def _handle_invalid_format(df, flagged_df, row):
         ~((flagged_df['filename'] == fname) & (flagged_df['frame_number'] == fnum))
     ]
     return df, flagged_df
-
 
 def handle_flagged(df,flagged_df, output_path):
     print(f"Flagged {len(flagged_df)} rows. How would you like to proceed?")
@@ -271,7 +278,6 @@ def handle_flagged(df,flagged_df, output_path):
 
     return df, flagged_df
 
-
 def _weight_to_digits(weight):
     try:
         value = float(weight)
@@ -283,7 +289,6 @@ def _weight_to_digits(weight):
         return None
     return as_digits
 
-
 def _digit_hist_from_df(df):
     hist = np.zeros(10, dtype=np.int64)
     for weight in df['weight'].tolist():
@@ -294,18 +299,6 @@ def _digit_hist_from_df(df):
             hist[int(d)] += 1
     return hist
 
-
-def _build_video_stats(df):
-    stats = []
-    for filename, group in df.groupby('filename'):
-        stats.append({
-            'filename': filename,
-            'frame_count': int(len(group)),
-            'digit_hist': _digit_hist_from_df(group),
-        })
-    return pd.DataFrame(stats)
-
-
 def _build_row_strat_labels(df):
     numeric_weight = pd.to_numeric(df['weight'], errors='coerce')
     seq_labels = numeric_weight.map(lambda x: f"{x:.3f}" if pd.notna(x) else 'nan')
@@ -314,7 +307,6 @@ def _build_row_strat_labels(df):
     rare = set(counts[counts < 2].index.tolist())
     labels = seq_labels.where(~seq_labels.isin(rare), other='other').fillna('other')
     return labels
-
 
 def _split_rows_stratified(df, train, val, test, seed):
     if df.empty:
@@ -374,30 +366,7 @@ def _split_rows_stratified(df, train, val, test, seed):
         test_df.reset_index(drop=True),
     )
 
-def split_data(df, train=0.75, val=0.125, test=0.125, waste_threshold=0.10, seed=42):
-    """
-    Split a labelled frame DataFrame into train, validation, and test sets,
-    keeping all frames from the same video in the same split to avoid data leakage.
-
-    Uses a two-phase greedy algorithm to get as close to the target ratios as
-    possible while minimising discarded frames:
-
-      Phase 1: largest-first, whole videos only.
-        Videos are sorted by frame count descending and assigned whole to
-        whichever split has the largest remaining deficit, provided the video
-        fits within that split's remaining budget. The scan restarts after each
-        successful assignment so no valid placement is missed.
-
-      Phase 2: smallest-first, trim to fit.
-        Videos that were too large to fit whole into any remaining budget slot
-        are sorted ascending and used to top up each split. A video is trimmed
-        to exactly the frames needed; the leftover tail is discarded. Working
-        smallest-first ensures the trimmed tail is as small as possible.
-
-    If the percentage of unused frames is larger than the waste threshold,
-    I was going to have recommend_labeling() be triggered to help get closer to
-    target splits, but I never got around to implementing it.
-    """
+def split_data(df, train=0.75, val=0.125, test=0.125, seed=42):
     print("Attempting to split data...")
     print(f"Target splits: {train*100:.1f}% train, {val*100:.1f}% validation, {test*100:.1f}% test")
 
@@ -409,97 +378,19 @@ def split_data(df, train=0.75, val=0.125, test=0.125, waste_threshold=0.10, seed
         empty = pd.DataFrame(columns=df.columns)
         return empty.copy(), empty.copy(), empty.copy()
 
-    splits = ('train', 'val', 'test')
+    train_df, val_df, test_df = _split_rows_stratified(df, train, val, test, seed)
+
+    total_rows = len(df)
     ratios = {'train': train, 'val': val, 'test': test}
-
-    video_stats = _build_video_stats(df)
-    if video_stats.empty:
-        empty = pd.DataFrame(columns=df.columns)
-        return empty.copy(), empty.copy(), empty.copy()
-
-    if len(video_stats) < len(splits):
-        print(
-            "Not enough unique videos for leakage-safe video-level split across all subsets. "
-            "Falling back to row-level stratified split."
-        )
-        return _split_rows_stratified(df, train, val, test, seed)
-
-    total_frames = int(video_stats['frame_count'].sum())
-    total_digit_hist = np.sum(video_stats['digit_hist'].to_list(), axis=0)
-
-    target_frames = {s: int(round(ratios[s] * total_frames)) for s in splits}
-    target_frames['train'] += total_frames - sum(target_frames.values())
-    target_digit_hist = {s: total_digit_hist * ratios[s] for s in splits}
-
-    current_frames = {s: 0 for s in splits}
-    current_digit_hist = {s: np.zeros(10, dtype=np.float64) for s in splits}
-    remaining_frames = target_frames.copy()
-    assigned = {s: [] for s in splits}
-
-    rng = np.random.default_rng(seed)
-    order_df = video_stats.copy()
-    order_df['rand'] = rng.random(len(order_df))
-    order_df = order_df.sort_values(by=['frame_count', 'rand'], ascending=[False, True]).reset_index(drop=True)
-
-    for _, row in order_df.iterrows():
-        filename = str(row['filename'])
-        frame_count = int(pd.to_numeric(row['frame_count']))
-        video_hist = np.asarray(row['digit_hist'], dtype=np.float64)
-
-        positive_deficit_splits = [s for s in splits if remaining_frames[s] > 0]
-        if positive_deficit_splits:
-            largest_deficit = max(remaining_frames[s] for s in positive_deficit_splits)
-            candidate_splits = [s for s in positive_deficit_splits if remaining_frames[s] == largest_deficit]
-        else:
-            candidate_splits = list(splits)
-
-        best_split = candidate_splits[0]
-        best_score = float('inf')
-
-        for s in candidate_splits:
-            frame_target = max(target_frames[s], 1)
-            projected_remaining = remaining_frames[s] - frame_count
-            overflow = max(0, -projected_remaining) / frame_target
-            underfill = max(0, projected_remaining) / frame_target
-
-            projected_hist = current_digit_hist[s] + video_hist
-            class_target = np.maximum(target_digit_hist[s], 1.0)
-            class_error = np.mean(np.abs(projected_hist - target_digit_hist[s]) / class_target)
-
-            score = 0.70 * overflow + 0.10 * underfill + 0.20 * class_error
-
-            if score < best_score:
-                best_score = score
-                best_split = s
-
-        assigned[best_split].append(filename)
-        current_frames[best_split] += frame_count
-        current_digit_hist[best_split] += video_hist
-        remaining_frames[best_split] -= frame_count
-
-    grouped = {name: g for name, g in df.groupby('filename')}
-    result = {}
-    for s in splits:
-        parts = [grouped[name] for name in assigned[s] if name in grouped]
-        result[s] = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame(columns=df.columns)
-
-    total_assigned = sum(len(result[s]) for s in splits)
-    wasted_frames = total_frames - total_assigned
-    wasted_percent = (wasted_frames / total_frames) if total_frames > 0 else 0.0
+    result = {'train': train_df, 'val': val_df, 'test': test_df}
 
     print("Split summary:")
-    for s in splits:
-        actual_percent = (len(result[s]) / total_frames) * 100 if total_frames > 0 else 0
-        target_percent = ratios[s] * 100
-        print(f"{s:>5}: {actual_percent:.1f}% (target {target_percent:.1f}%)")
+    for split_name in ('train', 'val', 'test'):
+        actual_percent = (len(result[split_name]) / total_rows) * 100 if total_rows > 0 else 0
+        target_percent = ratios[split_name] * 100
+        print(f"{split_name:>5}: {actual_percent:.1f}% (target {target_percent:.1f}%)")
 
-    if wasted_percent > waste_threshold:
-        print(f"WARNING: {wasted_percent*100:.1f}% of frames unassigned (threshold: {waste_threshold*100:.1f}%)")
-        print("Triggering recommended labelling...")
-        # recommend_labeling(df, wasted_frames, waste_threshold)
-
-    return result['train'], result['val'], result['test']
-
+    return train_df, val_df, test_df
 
 def balance_classes(dfs, split_names=('train', 'val', 'test')):
     print("\nDigit-class balance report:")
@@ -524,7 +415,6 @@ def balance_classes(dfs, split_names=('train', 'val', 'test')):
     print("-" * 60)
     return reports
 
-
 def _parse_args():
     parser = argparse.ArgumentParser(description="Validate and split labelled frame data.")
     parser.add_argument('--csv-path', default='data/all_data.csv', help='Input CSV with filename,frame_number,weight columns')
@@ -537,10 +427,8 @@ def _parse_args():
     parser.add_argument('--val', type=float, default=0.125, help='Validation ratio')
     parser.add_argument('--test', type=float, default=0.125, help='Test ratio')
     parser.add_argument('--seed', type=int, default=42, help='Random seed for deterministic split tie-breaks')
-    parser.add_argument('--waste-threshold', type=float, default=0.10, help='Unused-frame warning threshold')
     parser.add_argument('--skip-interactive-flags', action='store_true', help='Do not prompt for flagged rows; continue split')
     return parser.parse_args()
-
 
 if __name__ == "__main__":
     args = _parse_args()
@@ -609,7 +497,6 @@ if __name__ == "__main__":
         train=args.train,
         val=args.val,
         test=args.test,
-        waste_threshold=args.waste_threshold,
         seed=args.seed,
     )
     dfs = [train_df, val_df, test_df]
