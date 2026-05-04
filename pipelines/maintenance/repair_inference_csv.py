@@ -25,6 +25,7 @@ Hard-coded context: Leading-digit correction (1.xxx -> 7.xxx) and domain range f
 
 import argparse
 import sys
+import re
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -85,19 +86,107 @@ def find_flagged_spans(df):
     return spans
 
 
-def repair_with_span_analysis(df, tolerance=0.100):
+def remove_jump_outliers(df, jump_threshold):
+    """Remove rows where weight differs from previous weight by more than threshold.
+    
+    Rows are deleted (not flagged), and the DataFrame index is reset.
+    
+    Args:
+        df: DataFrame with 'smoothed_weight' column
+        jump_threshold: Maximum allowed absolute weight change (kg)
+    
+    Returns:
+        DataFrame with jump outliers removed and index reset
+    """
+    df = df.copy()
+    df = df.reset_index(drop=True)
+    
+    rows_to_keep = []
+    prev_weight = None
+    
+    for i, row in df.iterrows():
+        weight = row.get('smoothed_weight')
+        
+        # Always keep the first row
+        if i == 0:
+            rows_to_keep.append(i)
+            if pd.notna(weight):
+                prev_weight = weight
+            continue
+        
+        # Check jump from previous weight
+        if pd.notna(weight) and prev_weight is not None:
+            jump = abs(weight - prev_weight)
+            if jump <= jump_threshold:
+                rows_to_keep.append(i)
+                prev_weight = weight
+            # else: row removed, prev_weight stays same
+        elif pd.notna(weight):
+            rows_to_keep.append(i)
+            prev_weight = weight
+        else:
+            # NaN weight: keep the row but don't update prev_weight
+            rows_to_keep.append(i)
+    
+    removed_count = len(df) - len(rows_to_keep)
+    result = df.iloc[rows_to_keep].reset_index(drop=True)
+    
+    return result, removed_count
+
+
+def correct_smoothed_weight_outliers(df, domain_min=6.0, domain_max=8.0):
+    """Correct out-of-range smoothed weights using leading-digit correction (1.xxx -> 7.xxx).
+    
+    For smoothed weights outside the domain range, if the numeric value can be represented
+    as 1.xxx, attempt to correct it to 7.xxx and check if the corrected value falls in range.
+    
+    Args:
+        df: DataFrame with 'smoothed_weight' column
+        domain_min: Minimum valid weight (kg)
+        domain_max: Maximum valid weight (kg)
+    
+    Returns:
+        DataFrame with a new 'smoothed_weight_corrected' column indicating if correction was applied
+    """
+    df = df.copy()
+    df['smoothed_weight_corrected'] = False
+    
+    for i, row in df.iterrows():
+        weight = row.get('smoothed_weight')
+        
+        if pd.isna(weight):
+            continue
+        
+        # Check if out of range
+        if not (domain_min <= weight <= domain_max):
+            # Try to correct 1.xxx -> 7.xxx pattern
+            weight_str = f"{weight:.3f}"
+            if re.match(r'^1\.\d{3}$', weight_str):
+                corrected_str = '7' + weight_str[1:]
+                corrected_val = float(corrected_str)
+                
+                # If corrected value is in range, apply it
+                if domain_min <= corrected_val <= domain_max:
+                    df.loc[i, 'smoothed_weight'] = corrected_val
+                    df.loc[i, 'smoothed_weight_corrected'] = True
+    
+    return df
+
+
+def repair_with_span_analysis(df, tolerance=0.100, max_interpolation_span=5):
     """Apply hold-last repair validation using span boundary analysis.
     
-    For each contiguous flagged span:
-      - Interior spans with agreeing boundaries: keep hold-last (repair_reason = 'hold_last_confirmed')
-      - Interior spans with disagreeing boundaries: interpolate (repair_reason = 'interpolated')
-      - Trailing spans: no interpolation (repair_reason = 'trailing_span')
+        For each contiguous flagged span:
+            - Interior spans with agreeing boundaries: keep hold-last (repair_reason = 'hold_last_confirmed')
+            - Interior spans with disagreeing boundaries: interpolate only when the span is short enough
+            - Trailing spans: no interpolation (repair_reason = 'trailing_span')
     
     Unflagged and 'corrected' rows pass through unchanged.
     
     Args:
         df: DataFrame with columns ['frame_num', 'smoothed_weight', 'flag_reason', ...]
         tolerance: Absolute tolerance for boundary agreement
+        max_interpolation_span: Maximum flagged span length to interpolate; longer spans use hold-last
     
     Returns:
         DataFrame with added 'repair_reason' and 'repaired_smoothed_weight' columns
@@ -120,20 +209,21 @@ def repair_with_span_analysis(df, tolerance=0.100):
             
             if pd.notna(left_boundary_value) and pd.notna(right_boundary_value):
                 boundary_diff = abs(left_boundary_value - right_boundary_value)
-                
-                if boundary_diff <= tolerance:
-                    # Boundaries agree: keep hold-last
+                span_len = span_end - span_start + 1
+
+                if boundary_diff <= tolerance or span_len > max_interpolation_span:
+                    # Boundaries agree, or the span is too long to safely interpolate
                     for i in range(span_start, span_end + 1):
                         df.loc[i, 'repair_reason'] = 'hold_last_confirmed'
                 else:
-                    # Boundaries disagree: interpolate
-                    num_points = span_end - span_start + 1
+                    # Short interior span with disagreeing boundaries: interpolate
+                    num_points = span_len
                     interpolated_values = np.linspace(
-                        left_boundary_value, 
-                        right_boundary_value, 
+                        left_boundary_value,
+                        right_boundary_value,
                         num_points + 2
-                    )[1:-1]  # Exclude boundaries, keep interior points
-                    
+                    )[1:-1]
+
                     for j, i in enumerate(range(span_start, span_end + 1)):
                         df.loc[i, 'repaired_smoothed_weight'] = interpolated_values[j]
                         df.loc[i, 'repair_reason'] = 'interpolated'
@@ -200,12 +290,18 @@ def parse_args():
     parser.add_argument('--output', type=str, required=True, help='Path to output repaired CSV')
     parser.add_argument('--tolerance', type=float, default=0.100, 
                         help='Absolute tolerance (kg) for boundary agreement when deciding hold vs interpolate (default: 0.100)')
+    parser.add_argument('--max-interpolation-span', type=int, default=5,
+                        help='Maximum flagged span length to interpolate; longer spans keep hold-last (default: 5)')
     parser.add_argument('--window', type=int, default=10, 
                         help='Rolling median window size in frames (default: 10, ~10 seconds at 1fps)')
     parser.add_argument('--no-median', action='store_true', 
                         help='Skip rolling median pass, output only hold-last repair')
     parser.add_argument('--summary', action='store_true', 
                         help='Print flag_reason breakdown from input CSV before repair')
+    parser.add_argument('--jump-threshold', type=float, default=None,
+                        help='Remove rows where weight differs from previous by more than this value (kg); disabled by default')
+    parser.add_argument('--correct-smoothed-weight', action='store_true',
+                        help='Correct out-of-range smoothed weights using leading-digit correction (1.xxx -> 7.xxx)')
     
     return parser.parse_args()
 
@@ -228,10 +324,28 @@ def main():
     if args.summary:
         print_flag_reason_summary(df)
     
-    # Pass 1: Hold-Last Repair
-    print(f"Pass 1: Hold-Last Repair Analysis")
+    # Pass 0: Remove jump outliers (optional)
+    if args.jump_threshold is not None:
+        print(f"\nPass 0: Remove Jump Outliers")
+        print(f"  Jump threshold: {args.jump_threshold} kg")
+        df, removed_count = remove_jump_outliers(df, jump_threshold=args.jump_threshold)
+        print(f"  Removed {removed_count} rows due to excessive weight jumps")
+        print(f"  Remaining rows: {len(df)}")
+    
+    # Pass 1: Correct smoothed weight outliers (optional)
+    if args.correct_smoothed_weight:
+        print(f"\nPass 1: Correct Smoothed Weight Outliers")
+        print(f"  Domain range: 6.0 - 8.0 kg")
+        print(f"  Correction: 1.xxx -> 7.xxx")
+        df = correct_smoothed_weight_outliers(df, domain_min=6.0, domain_max=8.0)
+        corrected_count = df['smoothed_weight_corrected'].sum()
+        print(f"  Corrected {corrected_count} out-of-range smoothed weights")
+    
+    # Pass 2: Hold-Last Repair
+    print(f"\nPass 2: Hold-Last Repair Analysis")
     print(f"  Boundary tolerance: {args.tolerance} kg")
-    df = repair_with_span_analysis(df, tolerance=args.tolerance)
+    print(f"  Max interpolation span: {args.max_interpolation_span} frames")
+    df = repair_with_span_analysis(df, tolerance=args.tolerance, max_interpolation_span=args.max_interpolation_span)
     
     # Count repair outcomes
     repair_counts = df['repair_reason'].value_counts(dropna=False)
@@ -240,9 +354,9 @@ def main():
         reason_str = reason if reason else 'Not repaired (unflagged or corrected)'
         print(f"  {reason_str}: {count}")
     
-    # Pass 2: Rolling Median (optional)
+    # Pass 3: Rolling Median (optional)
     if not args.no_median:
-        print(f"\nPass 2: Rolling Median Filter")
+        print(f"\nPass 3: Rolling Median Filter")
         print(f"  Window size: {args.window} frames")
         df = apply_rolling_median(df, window=args.window)
         print(f"  Applied rolling median to repaired values")
@@ -251,14 +365,17 @@ def main():
         df['repaired_smoothed_weight'] = df['median_smoothed_weight'].fillna(df['repaired_smoothed_weight'])
         df = df.drop(columns=['median_smoothed_weight'])
     else:
-        print(f"\nPass 2: Skipped (--no-median)")
+        print(f"\nPass 3: Skipped (--no-median)")
     
 
     print(f"\nWriting output CSV: {args.output}")
     try:
         # Select columns for output: original columns + repair_reason + repaired_smoothed_weight
+        # Drop the temporary smoothed_weight_corrected column if it exists
+        df = df.drop(columns=['smoothed_weight_corrected'], errors='ignore')
         output_cols = [col for col in df.columns if col != 'repaired_smoothed_weight'] + ['repaired_smoothed_weight']
-        df[output_cols].to_csv(args.output, index=False)
+        # Keep all float outputs at three decimal places so the CSV stays consistent
+        df[output_cols].to_csv(args.output, index=False, float_format='%.3f')
         print(f"Repaired CSV written: {args.output}")
     except Exception as e:
         print(f"Error writing output CSV: {e}")

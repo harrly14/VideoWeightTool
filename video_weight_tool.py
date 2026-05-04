@@ -134,6 +134,7 @@ def menu_training():
         print("2. Run Validation Set Evaluation")
         print("3. Run Final Test Set Audit")
         print("4. Run Inference on Video")
+        print("5. Repair & Post-Process Inference CSV")
         print(ELEMENTS['SEPARATOR'])
         print("0. Back to Main Menu")
         print()
@@ -177,6 +178,76 @@ def menu_training():
                 args.append("--conservative")
 
             run_script("pipelines/inference.py", args)
+
+        elif choice == '5':
+            input_csv = stylized_input("Input CSV path (inference output)")
+            if not input_csv or not os.path.exists(input_csv):
+                print(f"{COLORS['RED']}Invalid path. Please try again...{COLORS['ENDC']}")
+                input(f"\n{COLORS['DIM']}Press Enter to continue...{COLORS['ENDC']}")
+                continue
+            
+            output_csv = stylized_input("Output CSV path", input_csv.replace('.csv', '_repaired.csv'))
+            
+            args = ["--input", input_csv, "--output", output_csv]
+            
+            # Optional: Remove jump outliers
+            while True:
+                remove_jumps = stylized_input("Remove rows with weight jumps > threshold? (y/n)", "y").strip().lower()
+                if remove_jumps in ('y','n'):
+                    break
+                print(f"{COLORS['RED']}Please answer 'y' or 'n'.{COLORS['ENDC']}")
+            if remove_jumps == 'y':
+                jump_threshold = stylized_input("Jump threshold (kg)", "0.2").strip()
+                try:
+                    float(jump_threshold)
+                    args.extend(["--jump-threshold", jump_threshold])
+                except ValueError:
+                    print(f"{COLORS['YELLOW']}Invalid threshold; skipping jump removal{COLORS['ENDC']}")
+            
+            # Optional: Correct smoothed weight outliers
+            while True:
+                correct_weights = stylized_input("Correct out-of-range smoothed weights (1.xxx -> 7.xxx)? (y/n)", "y").strip().lower()
+                if correct_weights in ('y','n'):
+                    break
+                print(f"{COLORS['RED']}Please answer 'y' or 'n'.{COLORS['ENDC']}")
+            if correct_weights == 'y':
+                args.append("--correct-smoothed-weight")
+            
+            # Optional: Print summary
+            while True:
+                show_summary = stylized_input("Print flag_reason summary? (y/n)", "y").strip().lower()
+                if show_summary in ('y','n'):
+                    break
+                print(f"{COLORS['RED']}Please answer 'y' or 'n'.{COLORS['ENDC']}")
+            if show_summary == 'y':
+                args.append("--summary")
+            
+            # Optional: Configure boundary tolerance
+            tolerance = stylized_input("Boundary agreement tolerance (kg)", "0.100").strip()
+            try:
+                float(tolerance)
+                args.extend(["--tolerance", tolerance])
+            except ValueError:
+                print(f"{COLORS['YELLOW']}Invalid tolerance; using default 0.100{COLORS['ENDC']}")
+            
+            # Optional: Skip median filter
+            while True:
+                skip_median = stylized_input("Skip rolling median filter? (y/n)", "n").strip().lower()
+                if skip_median in ('y','n'):
+                    break
+                print(f"{COLORS['RED']}Please answer 'y' or 'n'.{COLORS['ENDC']}")
+            if skip_median == 'y':
+                args.append("--no-median")
+            else:
+                # Optional: Configure window size
+                window = stylized_input("Rolling median window size (frames)", "10").strip()
+                try:
+                    int(window)
+                    args.extend(["--window", window])
+                except ValueError:
+                    print(f"{COLORS['YELLOW']}Invalid window; using default 10{COLORS['ENDC']}")
+            
+            run_script("pipelines/maintenance/repair_inference_csv.py", args)
 
         elif choice == '0':
             break
