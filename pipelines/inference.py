@@ -54,7 +54,8 @@ from core.dataset import get_transforms
 from core.config import (
         CNN_WIDTH, CNN_HEIGHT, NUM_DIVIDERS,
         FILTER_CONF_THRESH, FILTER_ENT_THRESH, FILTER_JUMP_THRESH,
-        STRICT_CONF_THRESH, STRICT_ENT_THRESH, STRICT_JUMP_THRESH
+        STRICT_CONF_THRESH, STRICT_ENT_THRESH, STRICT_JUMP_THRESH,
+        APPLY_LEADING_DIGIT_CORRECTION, DOMAIN_WEIGHT_MIN, DOMAIN_WEIGHT_MAX
     )
 from core.roi_utils import get_roi_for_frame, warp_roi_to_canvas, slice_roi_into_digits
 
@@ -379,10 +380,25 @@ FLAG_REASONS = {
     'jump': 'Physical jump',
     'parse_error': 'Parse error',
     'no_roi': 'No ROI coverage for frame',
+    'out_of_range': 'Value outside valid domain range (temporary hard-coded workaround for this training data)',
+    'corrected': 'Leading digit corrected (1.xxx → 7.xxx) and passed subsequent checks (temporary hard-coded workaround for this training data)',
 }
 
-def robust_filter_pipeline(results, conf_thresh=FILTER_CONF_THRESH, ent_thresh=FILTER_ENT_THRESH, jump_thresh=FILTER_JUMP_THRESH):
-    """Apply temporal and confidence/entropy based filtering over raw predictions."""
+def robust_filter_pipeline(results, conf_thresh=FILTER_CONF_THRESH, ent_thresh=FILTER_ENT_THRESH, jump_thresh=FILTER_JUMP_THRESH, apply_digit_correction=APPLY_LEADING_DIGIT_CORRECTION):
+    """Apply temporal and confidence/entropy based filtering over raw predictions.
+    
+    Filters are applied in order:
+      1. no_roi: pre-flagged frames bypass all subsequent checks
+      2. parse_error: invalid format strings
+      3. out_of_range: domain range check; attempts leading-digit correction (1.xxx -> 7.xxx) for 1.xxx values
+      4. corrected: correction was applied and value passed domain + downstream checks
+      5. low_conf: confidence below threshold
+      6. high_ent: entropy above threshold
+      7. jump: physical jump detected
+    
+    Args:
+        apply_digit_correction: If True, attempt to fix 1.xxx -> 7.xxx for values outside domain range.
+    """
     
     filtered_weights = []
     flag_reasons = []
@@ -402,13 +418,41 @@ def robust_filter_pipeline(results, conf_thresh=FILTER_CONF_THRESH, ent_thresh=F
         reason = None
         is_valid = False
         parsed_val = None
+        was_corrected = False
+        
+        # Step 1: Parse
         try:
             parsed_val = float(pred)
         except (ValueError, TypeError):
             reason = 'parse_error'
         
+        # Step 2: Domain range check + correction attempt (only if parse succeeded)
         if reason is None:
-            # parsed_val is guaranteed to be float here because parse_error was not set.
+            assert parsed_val is not None
+            
+            # Check if value is in valid domain range
+            if not (DOMAIN_WEIGHT_MIN <= parsed_val <= DOMAIN_WEIGHT_MAX):
+                # Attempt correction only if enabled and value matches 1.xxx pattern
+                if apply_digit_correction and pred and re.match(r'^1\.\d{3}$', pred):
+                    # Attempt to correct 1.xxx -> 7.xxx
+                    corrected_pred = '7' + pred[1:]
+                    try:
+                        corrected_val = float(corrected_pred)
+                        # Check if corrected value is in range
+                        if DOMAIN_WEIGHT_MIN <= corrected_val <= DOMAIN_WEIGHT_MAX:
+                            parsed_val = corrected_val
+                            was_corrected = True
+                        else:
+                            # Correction didn't help
+                            reason = 'out_of_range'
+                    except (ValueError, TypeError):
+                        reason = 'out_of_range'
+                else:
+                    # Correction not applicable or disabled
+                    reason = 'out_of_range'
+        
+        # Step 3: Confidence/entropy/jump checks (only if domain check passed)
+        if reason is None:
             assert parsed_val is not None
             if conf < conf_thresh:
                 reason = 'low_conf'
@@ -418,8 +462,16 @@ def robust_filter_pipeline(results, conf_thresh=FILTER_CONF_THRESH, ent_thresh=F
                 reason = 'jump'
             else:
                 is_valid = True
+                # If value passed all checks and was corrected, mark as corrected
+                if was_corrected:
+                    reason = 'corrected'
+                    is_valid = True  # Still valid, but flagged for review
         
-        if is_valid:
+        # Update last_valid for temporal continuity (only when not flagged)
+        if is_valid and reason is None:
+            last_valid = parsed_val
+        elif reason == 'corrected':
+            # Corrected values update last_valid but are flagged for review
             last_valid = parsed_val
         
         filtered_weights.append(last_valid)
@@ -723,6 +775,8 @@ Examples:
     parser.add_argument('--checkpoint-every', type=int, default=0, help='Save checkpoint every N frames (0 to disable)')
     parser.add_argument('--resume', action='store_true', help='Resume from last checkpoint')
     parser.add_argument('--save-video', action='store_true', help='Create annotated output video')
+    parser.add_argument('--apply-leading-digit-correction', action='store_true', default=True, help='Apply leading-digit correction (1.xxx -> 7.xxx) for out-of-range values (default: enabled)')
+    parser.add_argument('--no-digit-correction', action='store_true', help='Disable leading-digit correction')
     parser.add_argument('--confidence-threshold', type=float, default=0.5, help='Confidence threshold for flagging')
     parser.add_argument('--strict', action='store_true', help='Enable strict flagging mode')
     parser.add_argument('--conservative', action='store_true', help='Conservative mode: only unflag extremely certain frames')
@@ -869,12 +923,20 @@ def main():
         jump_thresh = FILTER_JUMP_THRESH
         print(f"   Normal mode: conf>={conf_thresh}, entropy<={ent_thresh}, jump<={jump_thresh} kg")
 
+    # Determine if leading-digit correction should be applied
+    apply_digit_correction = not args.no_digit_correction
+    if apply_digit_correction:
+        print(f"   Leading-digit correction: ENABLED (1.xxx -> 7.xxx for domain range {DOMAIN_WEIGHT_MIN}-{DOMAIN_WEIGHT_MAX})")
+    else:
+        print(f"   Leading-digit correction: DISABLED")
+
     print(f"\nApplying robust filter pipeline...")
     smoothed_weights, flag_reasons = robust_filter_pipeline(
         results, 
         conf_thresh=conf_thresh,
         ent_thresh=ent_thresh,
-        jump_thresh=jump_thresh
+        jump_thresh=jump_thresh,
+        apply_digit_correction=apply_digit_correction
     )
     
     # Update results with filtered weights and flags

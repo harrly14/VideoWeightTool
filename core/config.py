@@ -20,6 +20,12 @@ STRICT_CONF_THRESH = 0.85
 STRICT_ENT_THRESH = 0.3
 STRICT_JUMP_THRESH = 0.05
 
+# Domain range check and leading-digit correction (temporary hard-coded workaround for this training/output data)
+# When enabled, filters out-of-range values and attempts to fix misclassified leading digits (1.xxx → 7.xxx)
+APPLY_LEADING_DIGIT_CORRECTION = True
+DOMAIN_WEIGHT_MIN = 6.0       # Inclusive minimum valid weight (kg)
+DOMAIN_WEIGHT_MAX = 8.0       # Inclusive maximum valid weight (kg)
+
 class VideoParams:
     _DEFAULTS = {
         'brightness' : 0,

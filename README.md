@@ -201,6 +201,45 @@ If `--roi` is omitted, inference attempts to load ROI sections from `data/metada
 
 If `--roi` is provided, also provide `--dividers` so the ROI can be split into the four digit regions used by the model.
 
+### 4a. Repair & Post-Process Inference CSV (Optional)
+
+After running inference, you can repair flagged frames using span-aware hold-last validation and optional rolling median filtering:
+
+```bash
+python pipelines/maintenance/repair_inference_csv.py \
+    --input data/outputs/inference_results.csv \
+    --output data/outputs/inference_results_repaired.csv \
+    --summary
+```
+
+This script performs two passes:
+1. **Hold-Last Repair**: Analyzes contiguous flagged spans to determine whether to keep held values (agreeing boundaries) or interpolate (disagreeing boundaries). Outputs a `repair_reason` column documenting the decision.
+2. **Rolling Median** (optional): Applies configurable rolling median over repaired values; disable with `--no-median` to evaluate repair effectiveness independently.
+
+Options:
+```bash
+# Print diagnostic breakdown of flag_reason counts before repair
+python pipelines/maintenance/repair_inference_csv.py \
+    --input weights.csv --output weights_repaired.csv --summary
+
+# Adjust boundary tolerance for span repair (default 0.100 kg)
+python pipelines/maintenance/repair_inference_csv.py \
+    --input weights.csv --output weights_repaired.csv --tolerance 0.150
+
+# Adjust rolling median window size (default 10 frames ≈ 10 seconds at 1fps)
+python pipelines/maintenance/repair_inference_csv.py \
+    --input weights.csv --output weights_repaired.csv --window 5
+
+# Skip rolling median to evaluate repair alone
+python pipelines/maintenance/repair_inference_csv.py \
+    --input weights.csv --output weights_repaired.csv --no-median
+```
+
+Output CSV includes:
+- All original columns from inference
+- `repair_reason`: describes action taken on each flagged frame (`hold_last_confirmed`, `interpolated`, `trailing_span`, or `None` for unflagged)
+- `repaired_smoothed_weight`: final smoothed value after repair (and optional median)
+
 ### 5. Evaluate a Checkpoint
 
 Run evaluation on the validation split:
